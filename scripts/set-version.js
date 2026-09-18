@@ -27,4 +27,12 @@ for (const rel of ['package.json', 'touch-server/package.json']) {
   pkg.version = v;
   fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n');
 }
+// the lock file carries the version twice — without this the next `npm install` leaves the release dirty
+const lockPath = path.join(root, 'touch-server/package-lock.json');
+if (fs.existsSync(lockPath)) {
+  const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+  lock.version = v;
+  if (lock.packages && lock.packages['']) lock.packages[''].version = v;
+  fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2) + '\n');
+}
 console.log('version', v);

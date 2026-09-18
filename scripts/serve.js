@@ -18,4 +18,4 @@ http.createServer((req, res) => {
   if (!file.startsWith(root) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.statusCode = 404; return res.end('not found'); }
   res.setHeader('Content-Type', TYPES[path.extname(file)] || 'application/octet-stream');
   fs.createReadStream(file).pipe(res);
-}).listen(PORT, () => console.log(`IR Touch extension at http://localhost:${PORT}/ir-touch/manifest.json`));
+}).listen(PORT, '127.0.0.1', () => console.log(`IR Touch extension at http://127.0.0.1:${PORT}/ir-touch/manifest.json`));

@@ -9,6 +9,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
    so canvas units == screen pixels and a screen fraction is simply px / W. */
 function fakeObr(tokens) {
   const items = new Map(tokens.map(t => [t.id, { id: t.id, name: t.name, layer: 'CHARACTER', type: 'IMAGE', position: { x: t.x + t.w / 2, y: t.y + t.h / 2 }, w: t.w, h: t.h }]));
+  const vp = { x: 0, y: 0, scale: 1 };
   return {
     centre: id => ({ ...items.get(id).position }),
     scene: {
@@ -21,7 +22,7 @@ function fakeObr(tokens) {
       },
       grid: { getDpi: async () => DPI, onChange: () => () => {}, snapPosition: async p => ({ x: Math.floor(p.x / DPI) * DPI + DPI / 2, y: Math.floor(p.y / DPI) * DPI + DPI / 2 }) },
     },
-    viewport: { getPosition: async () => ({ x: 0, y: 0 }), getScale: async () => 1, getWidth: async () => W, getHeight: async () => H },
+    viewport: { getPosition: async () => ({ x: vp.x, y: vp.y }), getScale: async () => vp.scale, setPosition: async p => { vp.x = p.x; vp.y = p.y; }, setScale: async s => { vp.scale = s; }, getWidth: async () => W, getHeight: async () => H },
   };
 }
 async function bridgeFor(tokens, settings = {}) {
@@ -79,6 +80,27 @@ test('4 · phantom guard: a lifted-rule contact that dies before LIFT_ARM_MS mov
   assert.equal(b.contacts.size, 0);
 });
 
+test('4b · phantom guard holds with snap on: a phantom that dies before LIFT_ARM_MS moves nothing', async () => {
+  const { obr, b } = await bridgeFor([A], { snap: true });
+  touch(b, 1, 'down', 375, 375); touch(b, 1, 'up', 375, 375);
+  touch(b, 2, 'down', 560, 375);
+  await sleep(LIFT_ARM_MS / 3);
+  touch(b, 2, 'up', 500, 400);                 // the snap on release must not apply an unarmed target either
+  await sleep(LIFT_ARM_MS + 40); await b.chain;
+  assert.deepEqual(obr.centre('a'), { x: 375, y: 375 });
+  assert.equal(b.contacts.size, 0);
+});
+
+test('4c · a lifted-rule contact that lives past LIFT_ARM_MS still snaps on release', async () => {
+  const { obr, b } = await bridgeFor([A], { snap: true });
+  touch(b, 1, 'down', 375, 375); touch(b, 1, 'up', 375, 375);
+  touch(b, 2, 'down', 560, 375);
+  await sleep(LIFT_ARM_MS + 40); await b.chain;
+  touch(b, 2, 'up', 560, 375);
+  await settle(b);
+  assert.deepEqual(obr.centre('a'), { x: 525, y: 375 }, 'centre of the cell under the contact');
+});
+
 test('5 · plausibility: a set-down farther than a hand could carry the figure is not bound', async () => {
   const { obr, b } = await bridgeFor([A]);
   touch(b, 1, 'down', 375, 375); touch(b, 1, 'up', 375, 375);
@@ -121,6 +143,14 @@ test('8 · snap: on release the token lands on the cell centre', async () => {
   touch(b, 1, 'up', 610, 470);
   await settle(b);
   assert.deepEqual(obr.centre('a'), { x: 675, y: 525 });
+});
+
+test('10 · the physical-scale correction leaves a usable viewport behind', async () => {
+  const { b } = await bridgeFor([A], { physicalScale: true, displayWidthMm: 952 }); // 43″ picture → one cell = one inch
+  assert.notEqual(b.lastVp, null, 'a contact arriving right after the correction must not be dropped');
+  assert.equal(b.dpiCache, DPI);
+  const wanted = W / (952 / 25.4) / DPI;
+  assert.ok(Math.abs(b.lastVp.width - W / wanted) < 0.01);
 });
 
 test('9 · no HELLO within the timeout → error and socket closed; HELLO → mode touch', async () => {

@@ -12,18 +12,19 @@ import { VERSION, CONFIG_KEY, STATUS_CHANNEL, SETTINGS_KEY, HERE_KEY, CAST_PLAYE
 import { TouchBridge } from './touch.js?v=1.0.0';
 
 const log = (...a) => console.log('[ir-touch]', ...a);
-let role = 'PLAYER', playerName = '', remoteConfig = null, bridge = null, lastPublished = '', lastStatusAt = 0;
+let role = 'PLAYER', playerName = '', remoteConfig = null, bridge = null, lastStatusAt = 0;
 
 const isCastWindow = () => !!(navigator.presentation && navigator.presentation.receiver) || playerName === CAST_PLAYER_NAME;
-// this browser profile's own settings when it has any, otherwise whatever the GM published to the room
+// this browser profile's own settings when it has any, otherwise whatever the GM published to the room.
+// A GM window without own settings never publishes (see publishConfig) — it only follows the room.
 function effectiveSettings() { return (hasOwnSettings() || !remoteConfig) ? getSettings() : { ...DEFAULT_SETTINGS, ...remoteConfig }; }
 
 function publishConfig() {
-  if (role !== 'GM') return;
+  // only a GM window that has settings of its own: a second GM browser would otherwise publish the defaults
+  // (enabled: false) over the real config and switch the table off.
+  if (role !== 'GM' || !hasOwnSettings()) return;
   const cfg = getSettings();
-  const json = JSON.stringify(cfg);
-  if (json === lastPublished) return;
-  lastPublished = json;
+  if (remoteConfig) { const { updatedAt, ...inRoom } = remoteConfig; if (JSON.stringify(cfg) === JSON.stringify(inRoom)) return; } // compare against the room, not against what this window last wrote
   OBR.room.setMetadata({ [CONFIG_KEY]: { ...cfg, updatedAt: Date.now() } }).catch(e => log('config publish failed', e));
 }
 /* The touch table reports back by broadcast: a player-role window (the Cast window) may not write room metadata. */
@@ -44,17 +45,22 @@ function evaluate() {
   const diag = { role, playerName, isCastWindow: cast, here, cfgFrom: hasOwnSettings() ? 'local' : remoteConfig ? 'room' : 'defaults', screen: `${screen.width}×${screen.height}`, version: VERSION };
   const sig = run ? JSON.stringify([s.port, s.displayWidthMm, s.physicalScale, s.snap]) : '';
   if (!run) {
+    const wasRunning = !!bridge;
     if (bridge) { bridge.stop(); bridge = null; }
     setStatus({ active: false, connected: false, ...diag, reason: !s.enabled ? 'off' : 'not the touch table — open the Cast window on the TV, or tick "Use THIS window" there' });
+    if (wasRunning) publishStatus(true); // tell the GM the table went off — after setStatus, publishStatus reads getStatus()
     return;
   }
   if (bridge && bridge.sig === sig) return;
   if (bridge) bridge.stop();
   setStatus({ active: true, connected: false, error: null, protocol: null, touch: null, plog: [], counts: null, lastMoveName: null, lastMoveDelta: null, lastUnbound: null, ...diag });
-  bridge = new TouchBridge(OBR, { port: s.port, displayWidthMm: s.displayWidthMm, physicalScale: !!s.physicalScale, snap: !!s.snap },
-                           patch => { setStatus({ active: true, ...diag, ...patch }); publishStatus(false); });
-  bridge.sig = sig;
-  bridge.start();
+  // the callback is tied to THIS instance: a stopped bridge's asynchronous ws.onclose must not resurrect
+  // active: true or overwrite the status of the bridge that replaced it
+  const b = new TouchBridge(OBR, { port: s.port, displayWidthMm: s.displayWidthMm, physicalScale: !!s.physicalScale, snap: !!s.snap },
+                            patch => { if (bridge !== b) return; setStatus({ active: true, ...diag, ...patch }); publishStatus(false); });
+  bridge = b;
+  b.sig = sig;
+  b.start();
   publishStatus(true);
   log('touch table on (port', s.port + ')', cast ? 'cast window' : 'this window');
 }

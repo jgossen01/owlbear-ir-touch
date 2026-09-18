@@ -14,7 +14,7 @@ multitouch frame with the same report layout should work; other layouts need a s
 ## What you need
 
 - A Windows PC connected to the TV in the table, with the IR frame plugged in over USB
-- [Node.js](https://nodejs.org) 20 or newer on that PC
+- [Node.js](https://nodejs.org) 22 or newer on that PC
 - Chrome or Edge on that PC (it runs Owlbear's Cast window on the TV)
 - An Owlbear Rodeo room (the GM installs the extension, everybody can keep playing as usual)
 
@@ -191,7 +191,8 @@ Release: bump the version, update `CHANGELOG.md`, tag `v1.0.1`, push. dndsync.co
 Docker build.
 
 Table test checklist before a release: service finds the frame → calibrate → Cast window connects → drag a figure →
-lift and set it down elsewhere → drag two figures at once → a hand on the glass moves nothing → snap on release.
+lift and set it down elsewhere → drag two figures at once → a hand on the glass moves nothing → snap on release →
+snap on, lift a figure and let a phantom appear → nothing moves.
 
 ## License
 

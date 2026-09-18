@@ -181,10 +181,15 @@ export class TouchBridge {
       const wanted = pxPerInch / dpi;
       if (Math.abs(scale - wanted) / wanted > 0.01) {
         const cx = (w / 2 - pos.x) / scale, cy = (h / 2 - pos.y) / scale; // zoom around the screen centre so the map does not jump
+        const newPos = { x: w / 2 - cx * wanted, y: h / 2 - cy * wanted };
         await OBR.viewport.setScale(wanted);
-        await OBR.viewport.setPosition({ x: w / 2 - cx * wanted, y: h / 2 - cy * wanted });
-        this.onStatus({ scale: wanted, pxPerInch: Math.round(pxPerInch) });
-        return; // next tick reports the new viewport
+        await OBR.viewport.setPosition(newPos);
+        // keep the viewport we just asked for — without it onTouch would drop every contact until the next tick
+        this.lastVp = { left: -newPos.x / wanted, top: -newPos.y / wanted, width: w / wanted, height: h / wanted };
+        this.dpiCache = dpi;
+        this.lastViewport = JSON.stringify(this.lastVp);
+        this.onStatus({ scale: wanted, pxPerInch: Math.round(pxPerInch), viewport: `${Math.round(w)}×${Math.round(h)} px · scale ${wanted.toFixed(3)} · dpi ${dpi}` });
+        return; // corrected already — the next tick only confirms it
       }
     }
     this.lastVp = { left: -pos.x / scale, top: -pos.y / scale, width: w / scale, height: h / scale };
@@ -250,7 +255,10 @@ export class TouchBridge {
       this.contacts.delete(m.id);
       this.lifted = { tokenId: c.tokenId, name: c.name, at: now };
       this.note('touch #' + m.id, 'up ←', c.name, 'held', Math.round((now - c.downAt) / 100) / 10, 's');
-      if (this.settings.snap && c.target) this.chain = this.chain.then(() => this.applyTouch(c, true)).catch(e => log('snap failed', e));
+      // snap only when the contact is armed — a phantom bound by the "lifted" rule that dies before LIFT_ARM_MS
+      // must not move the token either (applyTouch skips the arm guard for a final apply). Under-contact binds
+      // have armedAt = 0 and snap as usual.
+      if (this.settings.snap && c.target && (!c.armedAt || now >= c.armedAt)) this.chain = this.chain.then(() => this.applyTouch(c, true)).catch(e => log('snap failed', e));
       this.onStatus({ touch: this.touchStatus() });
     }
   }
