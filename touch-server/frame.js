@@ -1,6 +1,6 @@
 'use strict';
 /* IR frame reader (raw USB via WinUSB/libusb).
-   Tested with "InfraredMultiTouch-61 / Touch Device,43-50P" (VID 08D3, PID 1000) — a standard HID multitouch digitizer:
+   Tested with a Greentouch GT-IR-F43 frame ("InfraredMultiTouch-61 / Touch Device,43-50P", VID 08D3, PID 1000) — a standard HID multitouch digitizer:
      interface 0: EP 0x81 IN, input report id 2, 62 bytes:
        6 slots × 10 bytes  [flags(bit0 tip, bit1 in-range, bit2 confidence)] [contact id, 0xFF = empty] [x u16] [y u16] [w u16] [h u16]
        byte 61 = contact count (hybrid mode: the first report of a burst carries the total, follow-ups 0)
@@ -11,7 +11,7 @@
 const usb = require('usb');
 const EventEmitter = require('events');
 
-const KNOWN = [{ vid: 0x08d3, pid: 0x1000, name: 'InfraredMultiTouch 43-50P' }];
+const KNOWN = [{ vid: 0x08d3, pid: 0x1000, name: 'Greentouch GT-IR-F43 (InfraredMultiTouch 43-50P)' }];
 const RAW_MAX = 32767;
 
 /* One input report (id 2, 62 bytes) → { count, contacts }. Pure, so it can be unit-tested without a frame. */

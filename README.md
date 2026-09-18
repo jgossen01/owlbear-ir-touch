@@ -7,9 +7,9 @@ the figure being lifted and set down somewhere else.
 
 <!-- screenshot / gif of the table goes here -->
 
-Tested hardware: **InfraredMultiTouch "Touch Device,43-50P"** (USB `08D3:1000`, 43″, 50 contacts). Any HID
-multitouch frame with the same report layout should work; other layouts need a small change in
-`touch-server/frame.js`.
+Tested hardware: **Greentouch GT-IR-F43** infrared touch frame (43″, 50 contacts; shows up as
+InfraredMultiTouch "Touch Device,43-50P", USB `08D3:1000`). Any HID multitouch frame with the same report layout
+should work; other layouts need a small change in `touch-server/frame.js`.
 
 ## What you need
 
