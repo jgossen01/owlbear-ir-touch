@@ -30,18 +30,18 @@ function fit(points) { // [{ rx, ry, fx, fy }]
   return { a: r1[0], b: r1[1], c: r1[2], d: r2[0], e: r2[1], f: r2[2] };
 }
 class Calibration {
-  constructor() { this.map = null; this.points = null; this.savedAt = null; this.load(); }
+  constructor(opts = {}) { this.file = opts.file || FILE; this.map = null; this.points = null; this.savedAt = null; this.load(); }
   load() {
-    try { const j = JSON.parse(fs.readFileSync(FILE, 'utf8')); if (j && j.map) { this.map = j.map; this.points = j.points || null; this.savedAt = j.savedAt || null; } } catch (_) {}
+    try { const j = JSON.parse(fs.readFileSync(this.file, 'utf8')); if (j && j.map) { this.map = j.map; this.points = j.points || null; this.savedAt = j.savedAt || null; } } catch (_) {}
   }
   set(points) {
     const map = fit(points);
     if (!map) return false;
     this.map = map; this.points = points; this.savedAt = new Date().toISOString();
-    fs.writeFileSync(FILE, JSON.stringify({ map, points, savedAt: this.savedAt }, null, 2));
+    fs.writeFileSync(this.file, JSON.stringify({ map, points, savedAt: this.savedAt }, null, 2));
     return true;
   }
-  clear() { this.map = null; this.points = null; this.savedAt = null; try { fs.unlinkSync(FILE); } catch (_) {} }
+  clear() { this.map = null; this.points = null; this.savedAt = null; try { fs.unlinkSync(this.file); } catch (_) {} }
   apply(rx, ry) {
     const m = this.map || IDENTITY;
     return { x: m.a * rx + m.b * ry + m.c, y: m.d * rx + m.e * ry + m.f };
