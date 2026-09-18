@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>IR Touch calibration</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #14110c; color: #f0e6c8; font: 18px system-ui, sans-serif; overflow: hidden; user-select: none; }
+  #stage { position: fixed; inset: 0; }
+  .target { position: absolute; width: 60px; height: 60px; margin: -30px 0 0 -30px; border: 3px solid #c8a84b; border-radius: 50%; box-shadow: 0 0 0 6px rgba(200,168,75,.15); display: none; }
+  .target::before, .target::after { content: ''; position: absolute; background: #c8a84b; }
+  .target::before { left: 50%; top: -20px; width: 2px; height: 100px; margin-left: -1px; }
+  .target::after { top: 50%; left: -20px; height: 2px; width: 100px; margin-top: -1px; }
+  .target.on { display: block; animation: pulse 1s infinite alternate; }
+  @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.15); } }
+  .dot { position: absolute; width: 26px; height: 26px; margin: -13px 0 0 -13px; border-radius: 50%; background: rgba(220,38,38,.75); border: 2px solid #fff; pointer-events: none; }
+  .dot span { position: absolute; left: 30px; top: 2px; font-size: 13px; white-space: nowrap; color: #fff; text-shadow: 0 0 4px #000; }
+  #panel { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; max-width: 720px; line-height: 1.5; }
+  #panel h1 { font-size: 26px; margin: 0 0 12px; color: #c8a84b; }
+  #panel .sub { opacity: .75; font-size: 15px; }
+  #warn { color: #f59e0b; margin-top: 12px; }
+  #foot { position: absolute; left: 16px; bottom: 12px; font-size: 13px; opacity: .6; }
+  #bar { position: absolute; left: 50%; bottom: 40px; transform: translateX(-50%); height: 6px; width: 300px; background: rgba(255,255,255,.12); border-radius: 3px; overflow: hidden; }
+  #bar i { display: block; height: 100%; width: 0; background: #c8a84b; transition: width .1s linear; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="panel">
+    <h1>IR Touch calibration</h1>
+    <div id="text">Connecting to the touch service…</div>
+    <div class="sub" id="sub"></div>
+    <div id="warn"></div>
+  </div>
+  <div id="bar" hidden><i></i></div>
+  <div id="foot">IR touch service · keys: <b>R</b> restart calibration · <b>T</b> test mode · <b>C</b> clear calibration · <b>Esc</b> close</div>
+</div>
+<script>
+/* Four targets, one near each corner. Hold a finger (or a mini) on each until the bar fills; the median raw
+   position of that hold becomes the reference. Fractions are computed relative to the SCREEN, so the window
+   should be full-screen (F11) on the table display — otherwise the page warns. */
+const OFF = 0.1;
+const TARGETS = [[OFF, OFF], [1 - OFF, OFF], [1 - OFF, 1 - OFF], [OFF, 1 - OFF]];
+const HOLD_MS = 1200;
+const $ = id => document.getElementById(id);
+const stage = $('stage'), text = $('text'), sub = $('sub'), warn = $('warn'), bar = $('bar'), barFill = bar.querySelector('i');
+let ws, step = -1, points = [], hold = null, mode = 'idle', targetEls = [], dots = new Map(), hello = null;
+
+/* window.screenX/Y are virtual-desktop coordinates (a second monitor starts at e.g. 1920), so they are taken
+   relative to this screen's own origin (screen.availLeft/Top). In full screen the window IS the screen. */
+const isFullscreen = () => Math.abs(window.innerWidth - screen.width) < 4 && Math.abs(window.innerHeight - screen.height) < 4;
+function windowOrigin() { // top-left of the page area in this screen's pixels
+  if (isFullscreen()) return { x: 0, y: 0 };
+  const chromeW = window.outerWidth - window.innerWidth, chromeH = window.outerHeight - window.innerHeight;
+  return { x: window.screenX - (screen.availLeft || 0) + chromeW / 2, y: window.screenY - (screen.availTop || 0) + chromeH };
+}
+function screenFraction(fx, fy) { // fraction of the window → fraction of the screen
+  const o = windowOrigin();
+  return { fx: (o.x + fx * window.innerWidth) / screen.width, fy: (o.y + fy * window.innerHeight) / screen.height };
+}
+function checkFullscreen() {
+  const full = isFullscreen();
+  warn.textContent = full ? '' : `Window is ${window.innerWidth}×${window.innerHeight}, screen ${screen.width}×${screen.height} — press F11 for full screen, the calibration assumes the page covers the whole table display.`;
+}
+function connect() {
+  ws = new WebSocket(`ws://${location.host}`);
+  ws.onopen = () => { ws.send(JSON.stringify({ type: 'HELLO', client: 'calibrate-page' })); };
+  ws.onclose = () => { text.textContent = 'Touch service not reachable — is it running?'; setTimeout(connect, 2000); };
+  ws.onmessage = ev => { const m = JSON.parse(ev.data); if (m.type === 'HELLO') { hello = m; start(); } else if (m.type === 'FRAME') { hello.frame = m; showStatus(); } else if (m.type === 'TOUCH') onTouch(m); else if (m.type === 'CALIBRATED') { hello.calibration = m; if (mode === 'saving') { mode = 'test'; showStatus(); } } };
+}
+function showStatus() {
+  if (!hello) return;
+  const f = hello.frame, c = hello.calibration;
+  sub.textContent = `Frame: ${f.connected ? f.name + ' · ' + (f.maxContacts || '?') + ' contacts' : 'NOT connected — ' + (f.error || '')} · calibration: ${c.calibrated ? 'saved ' + (c.savedAt || '').replace('T', ' ').slice(0, 19) : 'none (raw 1:1)'}`;
+  if (mode === 'test') { text.innerHTML = 'Test mode — every contact is drawn where the service maps it.<br>Press <b>R</b> to calibrate again.'; $('panel').style.opacity = .5; }
+}
+function start() {
+  checkFullscreen(); showStatus();
+  if (!targetEls.length) for (let i = 0; i < 4; i++) { const el = document.createElement('div'); el.className = 'target'; stage.appendChild(el); targetEls.push(el); }
+  if (hello.calibration.calibrated) { mode = 'test'; showStatus(); return; }
+  restart();
+}
+function restart() {
+  mode = 'calib'; points = []; step = -1; hold = null; $('panel').style.opacity = 1;
+  next();
+}
+function next() {
+  step++;
+  targetEls.forEach((el, i) => { el.classList.toggle('on', i === step); const t = TARGETS[i]; el.style.left = `${t[0] * 100}%`; el.style.top = `${t[1] * 100}%`; });
+  bar.hidden = true;
+  if (step >= 4) { finish(); return; }
+  text.innerHTML = `Point ${step + 1} of 4: hold one finger on the <b>${['top left', 'top right', 'bottom right', 'bottom left'][step]}</b> target until the bar fills.`;
+}
+function finish() {
+  mode = 'saving';
+  text.textContent = 'Saving calibration…';
+  ws.send(JSON.stringify({ type: 'CALIBRATION', points }));
+}
+function onTouch(m) {
+  drawDot(m);
+  if (mode !== 'calib' || step < 0 || step > 3) return;
+  if (m.phase === 'down' && !hold) { hold = { id: m.id, samples: [], since: m.t }; bar.hidden = false; }
+  if (!hold || m.id !== hold.id) return;
+  if (m.phase === 'up') { hold = null; bar.hidden = true; barFill.style.width = '0'; return; }
+  hold.samples.push([m.rx, m.ry]);
+  const p = Math.min(1, (m.t - hold.since) / HOLD_MS);
+  barFill.style.width = `${p * 100}%`;
+  if (p >= 1 && hold.samples.length >= 5) {
+    const med = a => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
+    const rx = med(hold.samples.map(s => s[0])), ry = med(hold.samples.map(s => s[1]));
+    const f = screenFraction(TARGETS[step][0], TARGETS[step][1]);
+    points.push({ rx, ry, fx: f.fx, fy: f.fy });
+    hold = { id: m.id, samples: [], since: Infinity, done: true }; // ignore until lifted
+    setTimeout(next, 400);
+  }
+}
+function drawDot(m) {
+  let d = dots.get(m.id);
+  if (m.phase === 'up') { if (d) { d.remove(); dots.delete(m.id); } return; }
+  if (!d) { d = document.createElement('div'); d.className = 'dot'; d.innerHTML = '<span></span>'; stage.appendChild(d); dots.set(m.id, d); }
+  // service fractions are of the screen → back to window pixels
+  const o = windowOrigin();
+  const px = m.x * screen.width - o.x, py = m.y * screen.height - o.y;
+  d.style.left = `${px}px`; d.style.top = `${py}px`;
+  d.querySelector('span').textContent = `#${m.id} ${(m.x * 100).toFixed(1)}% ${(m.y * 100).toFixed(1)}%`;
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'r' || e.key === 'R') restart();
+  if (e.key === 't' || e.key === 'T') { mode = 'test'; targetEls.forEach(el => el.classList.remove('on')); bar.hidden = true; showStatus(); }
+  if (e.key === 'c' || e.key === 'C') { ws.send(JSON.stringify({ type: 'CALIBRATION_CLEAR' })); restart(); }
+  if (e.key === 'Escape') window.close();
+});
+window.addEventListener('resize', checkFullscreen);
+connect();
+</script>
+</body>
+</html>

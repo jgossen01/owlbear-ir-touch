@@ -1,0 +1,13 @@
+{
+  "name": "owlbear-ir-touch",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Owlbear Rodeo extension + touch service: physical minis on an infrared touch frame move the tokens.",
+  "scripts": {
+    "test": "node --test \"extension/test/**/*.test.mjs\" \"touch-server/test/**/*.test.js\"",
+    "serve": "node scripts/serve.js",
+    "mock": "node touch-server/mock.js",
+    "version:set": "node scripts/set-version.js"
+  }
+}
