@@ -14,6 +14,18 @@ const EventEmitter = require('events');
 const KNOWN = [{ vid: 0x08d3, pid: 0x1000, name: 'InfraredMultiTouch 43-50P' }];
 const RAW_MAX = 32767;
 
+/* One input report (id 2, 62 bytes) → { count, contacts }. Pure, so it can be unit-tested without a frame. */
+function parseReport(buf) {
+  if (!buf || buf.length < 62 || buf[0] !== 2) return null;
+  const contacts = [];
+  for (let i = 0; i < 6; i++) {
+    const o = 1 + i * 10, flags = buf[o], id = buf[o + 1];
+    if (id === 0xff || (flags === 0 && buf.readUInt16LE(o + 2) === 0 && buf.readUInt16LE(o + 4) === 0)) continue;
+    contacts.push({ id, tip: !!(flags & 1), inRange: !!(flags & 2), confidence: !!(flags & 4), rx: buf.readUInt16LE(o + 2), ry: buf.readUInt16LE(o + 4), w: buf.readUInt16LE(o + 6), h: buf.readUInt16LE(o + 8) });
+  }
+  return { count: buf[61], contacts };
+}
+
 class Frame extends EventEmitter {
   constructor(opts = {}) {
     super();
@@ -70,16 +82,11 @@ class Frame extends EventEmitter {
     try { const f = await this.ctrl(0xa1, 0x01, 0x0300 | 3, iface, 2); if (f && f.length >= 2) this.info.maxContacts = f[1]; } catch (_) {} // feature 3 = contact count maximum
   }
   onReport(buf) {
-    if (buf.length < 62 || buf[0] !== 2) return;
+    const rep = parseReport(buf);
+    if (!rep) return;
     this.reports++;
     this.lastReportAt = Date.now();
-    const contacts = [];
-    for (let i = 0; i < 6; i++) {
-      const o = 1 + i * 10, flags = buf[o], id = buf[o + 1];
-      if (id === 0xff || (flags === 0 && buf.readUInt16LE(o + 2) === 0 && buf.readUInt16LE(o + 4) === 0)) continue;
-      contacts.push({ id, tip: !!(flags & 1), inRange: !!(flags & 2), confidence: !!(flags & 4), rx: buf.readUInt16LE(o + 2), ry: buf.readUInt16LE(o + 4), w: buf.readUInt16LE(o + 6), h: buf.readUInt16LE(o + 8) });
-    }
-    this.emit('report', { t: this.lastReportAt, count: buf[61], contacts });
+    this.emit('report', { t: this.lastReportAt, ...rep });
   }
   onLost(reason) {
     const dev = this.dev; this.dev = null;
@@ -91,4 +98,4 @@ class Frame extends EventEmitter {
   close() { if (this.dev) this.onLost('closed'); }
 }
 
-module.exports = { Frame, RAW_MAX, KNOWN };
+module.exports = { Frame, RAW_MAX, KNOWN, parseReport };
