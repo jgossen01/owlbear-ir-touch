@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IR Touch</title>
+<style>
+  :root { --bg: #f4f1ea; --card: #fbf9f4; --ink: #1f1b16; --muted: #6f675c; --rule: #d8d2c4; --accent: #b8862b; --accent-ink: #6e4f14; --ok: #3f6b3a; --err: #8a2f2a; --warn: #8f6a1a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161412; --card: #221e1a; --ink: #ece5d8; --muted: #a3998a; --rule: #3d362e; --accent: #d4a54a; --accent-ink: #e4c273; --ok: #a9c48b; --err: #e08a82; --warn: #e0bd5c; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.45 system-ui, sans-serif; }
+  body { padding: 12px 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+  h1 { font-size: 17px; margin: 0; }
+  .sub { color: var(--muted); font-size: 12px; }
+  .card { background: var(--card); border: 1px solid var(--rule); border-radius: 6px; padding: 10px 12px; display: flex; flex-direction: column; gap: 7px; }
+  .head h2 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--accent-ink); }
+  label.row { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
+  label.row input { margin-top: 3px; }
+  label.row span small { display: block; color: var(--muted); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .grid2 label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); }
+  .grid2 input, .grid2 select { width: 100%; padding: 5px 7px; border: 1px solid var(--rule); border-radius: 4px; background: var(--bg); color: var(--ink); font: 600 13px system-ui, sans-serif; }
+  .status { display: flex; align-items: flex-start; gap: 8px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; margin-top: 5px; }
+  .dot.ok { background: var(--ok); } .dot.err { background: var(--err); } .dot.warn { background: var(--warn); }
+  .msg { color: var(--err); font-size: 12px; white-space: pre-wrap; }
+  .msg:empty { display: none; }
+  pre { font: 10px ui-monospace, monospace; white-space: pre-wrap; max-height: 150px; overflow: auto; margin: 4px 0; padding: 6px; border: 1px solid var(--rule); border-radius: 4px; background: var(--bg); }
+  button { padding: 4px 8px; border: 1px solid var(--rule); border-radius: 4px; background: transparent; color: var(--ink); font: 600 12px system-ui, sans-serif; cursor: pointer; align-self: flex-start; }
+  code { user-select: all; font: 11px ui-monospace, monospace; }
+  a { color: var(--accent-ink); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<script>
+  // If the module below fails inside Owlbear's iframe, say why instead of showing a dead card.
+  window.addEventListener('error', function (e) { var d = document.getElementById('boot-msg'); if (d) d.textContent = 'Error: ' + (e.message || e.type) + ' @ ' + (e.filename || '') + ':' + (e.lineno || ''); }, true);
+</script>
+  <div><h1>IR Touch</h1><div class="sub">Physical minis on an infrared touch frame move the tokens.</div><div class="msg" id="boot-msg"></div></div>
+
+  <div class="card">
+    <div class="status"><span class="dot" id="dot"></span><span id="status-text">…</span></div>
+    <div class="msg" id="status-msg"></div>
+    <label class="row"><input type="checkbox" id="s-enabled"><span>Enable touch table<small>The Cast window on the TV connects to the touch service on the table PC and moves the tokens under the minis.</small></span></label>
+    <div class="grid2">
+      <label>Service port<input type="text" inputmode="numeric" id="s-port" placeholder="50000"></label>
+      <label>Display size<select id="s-size">
+        <option value="">Select…</option>
+        <option value="32">32″ (16:9)</option><option value="40">40″ (16:9)</option><option value="42">42″ (16:9)</option><option value="43">43″ (16:9)</option>
+        <option value="49">49″ (16:9)</option><option value="55">55″ (16:9)</option><option value="65">65″ (16:9)</option>
+        <option value="custom">Custom width…</option>
+      </select></label>
+      <label id="s-width-row" hidden>Picture width, mm<input type="text" inputmode="numeric" id="s-width" placeholder="e.g. 952"></label>
+    </div>
+    <label class="row"><input type="checkbox" id="s-physical"><span>1 grid cell = 1 inch on the display<small>Needs the display size. Overrides the zoom in the table window.</small></span></label>
+    <label class="row"><input type="checkbox" id="s-snap"><span>Snap to the grid on release</span></label>
+    <label class="row"><input type="checkbox" id="s-autocast"><span>Auto-detect the Cast window<small>Owlbear's Cast window (player “Cast Receiver”) becomes the touch table by itself.</small></span></label>
+    <label class="row"><input type="checkbox" id="s-here"><span>Use THIS window as the touch table<small>For a second browser window on the TV instead of the Cast window.</small></span></label>
+  </div>
+
+  <div class="card">
+    <div class="head"><h2>Setup</h2></div>
+    <div class="sub">On the table PC: start the touch service, then calibrate once at <code id="cal-url">http://localhost:50000/calibrate</code> (full screen on the TV). Chrome/Edge must run with <code>--disable-features=LocalNetworkAccessChecks</code> there. <a href="https://github.com/jgossen01/owlbear-ir-touch#readme" target="_blank" rel="noopener">Full guide</a></div>
+    <details>
+      <summary class="sub">Diagnostics</summary>
+      <div class="sub" id="diag-info"></div>
+      <pre id="plog"></pre>
+      <button id="copy">Copy log</button>
+    </details>
+  </div>
+
+  <div class="sub">Pairs with <a href="https://dndsync.com" target="_blank" rel="noopener"><b>D&amp;D Sync</b></a> — a free web app that keeps the whole table in sync in real time: character sheets, initiative tracker, GM panel, no install. Together with IR Touch you get an initiative bar, movement rings and shared dice rolls on the table display. <a href="https://ko-fi.com/dndsync" target="_blank" rel="noopener">Support on Ko-fi ♥</a></div>
+
+<script type="module">
+import { SETTINGS_KEY, STATUS_KEY, REMOTE_KEY, CAST_PLAYER_NAME, getSettings, setSettings, getHere, setHere, getStatus, getRemote, inchToWidthMm } from './store.js?v=1.0.0';
+const $ = id => document.getElementById(id);
+
+function touchText(r) {
+  if (!r.connected) return 'service NOT connected' + (r.error ? ' — ' + r.error : '');
+  if (!r.protocol) return 'connected · waiting for the service to say hello';
+  const t = r.touch || {};
+  return `service v${t.version || '?'} · frame ${t.frame ? 'OK (' + (t.frameName || '') + ')' : 'NOT connected' + (t.frameError ? ' — ' + t.frameError : '')}`
+    + ` · ${t.calibrated ? 'calibrated' : 'NOT calibrated (raw 1:1)'}${t.contacts ? ' · ' + t.contacts + ' figure(s) held' : ''}${t.lifted ? ' · lifted: ' + t.lifted : ''}`
+    + `${r.lastMoveName ? ' · moved ' + r.lastMoveName : ''}${r.lastUnbound ? ' · last touch on nothing at ' + r.lastUnbound : ''}`;
+}
+function render() {
+  const s = getSettings(), st = getStatus(), rt = getRemote();
+  $('s-enabled').checked = !!s.enabled;
+  if (document.activeElement !== $('s-port')) $('s-port').value = s.port || '';
+  const custom = !s.displayInch && s.displayWidthMm > 0;
+  if (document.activeElement !== $('s-size')) $('s-size').value = s.displayInch ? String(s.displayInch) : (custom ? 'custom' : '');
+  $('s-width-row').hidden = !(custom || $('s-size').value === 'custom');
+  if (document.activeElement !== $('s-width')) $('s-width').value = s.displayWidthMm || '';
+  $('s-physical').checked = !!s.physicalScale;
+  $('s-snap').checked = !!s.snap;
+  $('s-autocast').checked = s.autoCast !== false;
+  $('s-here').checked = getHere();
+  $('cal-url').textContent = `http://localhost:${s.port || 50000}/calibrate`;
+  const fresh = rt && Date.now() - (rt.receivedAt || 0) < 20000;
+  const dot = $('dot'); dot.className = 'dot';
+  let text, msg = '';
+  if (!s.enabled) text = 'off';
+  else if (st.active) { text = 'this window is the touch table · ' + touchText(st); dot.classList.add(st.connected && st.protocol ? 'ok' : 'err'); msg = st.connected ? '' : (st.error || ''); }
+  else if (fresh) { const who = rt.playerName === CAST_PLAYER_NAME ? 'Cast window' : (rt.playerName || rt.role || 'table window'); text = `${who} (${rt.screen || '?'}, v${rt.version || '?'}): ` + touchText(rt); dot.classList.add(rt.connected && rt.protocol ? 'ok' : 'err'); msg = rt.connected ? '' : (rt.error || ''); }
+  else { text = 'waiting for the Cast window — open it on the TV, or tick “Use THIS window” there'; dot.classList.add('warn'); }
+  $('status-text').textContent = text; $('status-msg').textContent = msg;
+  const src = st.active ? st : (fresh ? rt : null);
+  $('diag-info').textContent = `role ${st.role || '?'} · ${st.active ? 'touch table ON' : 'off here (' + (st.reason || '') + ')'} · cast window ${st.isCastWindow ? 'yes' : 'no'} · settings from ${st.cfgFrom || '?'} · screen ${st.screen || '?'}`
+    + `${src && src.viewport ? ' · ' + src.viewport : ''}${src && src.counts ? ` · in ${src.counts.in} / applied ${src.counts.applied} / ignored ${src.counts.ignored}` : ''}${src && src.lastMoveDelta ? ' · last Δ ' + src.lastMoveDelta : ''}`;
+  $('plog').textContent = ((src && src.plog) || []).join('\n') || '(no messages yet)';
+}
+const num = (v, def) => { const n = Number(String(v).replace(',', '.')); return Number.isFinite(n) && n > 0 ? n : def; };
+$('s-enabled').addEventListener('change', e => { setSettings({ enabled: e.target.checked }); render(); });
+$('s-port').addEventListener('change', e => { setSettings({ port: Math.round(num(e.target.value, 50000)) }); render(); });
+$('s-size').addEventListener('change', e => {
+  const v = e.target.value;
+  if (v === 'custom') { setSettings({ displayInch: 0 }); $('s-width-row').hidden = false; $('s-width').focus(); return; }
+  const inch = Number(v) || 0;
+  setSettings({ displayInch: inch, displayWidthMm: inch ? inchToWidthMm(inch) : 0 }); render();
+});
+$('s-width').addEventListener('change', e => { setSettings({ displayInch: 0, displayWidthMm: Math.round(num(e.target.value, 0)) }); render(); });
+$('s-physical').addEventListener('change', e => { setSettings({ physicalScale: e.target.checked }); render(); });
+$('s-snap').addEventListener('change', e => { setSettings({ snap: e.target.checked }); render(); });
+$('s-autocast').addEventListener('change', e => { setSettings({ autoCast: e.target.checked }); render(); });
+$('s-here').addEventListener('change', e => { setHere(e.target.checked); render(); });
+$('copy').addEventListener('click', () => { const t = $('diag-info').textContent + '\n' + $('plog').textContent; if (navigator.clipboard) navigator.clipboard.writeText(t).catch(() => {}); });
+window.addEventListener('storage', ev => { if (ev.key === STATUS_KEY || ev.key === REMOTE_KEY || ev.key === SETTINGS_KEY || ev.key === null) render(); });
+setInterval(render, 2000);
+render();
+</script>
+</body>
+</html>

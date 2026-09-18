@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>IR Touch — background</title></head>
+<body>
+<script type="module">
+/* Background page of the IR Touch extension — runs in every client that has the room open.
+   GM windows publish the settings to room metadata (the Cast window is an isolated browser profile without our
+   localStorage) and collect the status the touch table broadcasts. The window that IS the table display
+   (Owlbear's Cast window, or "Use THIS window" in the popover) runs the TouchBridge. */
+import OBR from 'https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm';
+import { VERSION, CONFIG_KEY, STATUS_CHANNEL, SETTINGS_KEY, HERE_KEY, CAST_PLAYER_NAME, DEFAULT_SETTINGS, getSettings, hasOwnSettings, getHere, getStatus, setStatus, setRemote } from './store.js?v=1.0.0';
+import { TouchBridge } from './touch.js?v=1.0.0';
+
+const log = (...a) => console.log('[ir-touch]', ...a);
+let role = 'PLAYER', playerName = '', remoteConfig = null, bridge = null, lastPublished = '', lastStatusAt = 0;
+
+const isCastWindow = () => !!(navigator.presentation && navigator.presentation.receiver) || playerName === CAST_PLAYER_NAME;
+// this browser profile's own settings when it has any, otherwise whatever the GM published to the room
+function effectiveSettings() { return (hasOwnSettings() || !remoteConfig) ? getSettings() : { ...DEFAULT_SETTINGS, ...remoteConfig }; }
+
+function publishConfig() {
+  if (role !== 'GM') return;
+  const cfg = getSettings();
+  const json = JSON.stringify(cfg);
+  if (json === lastPublished) return;
+  lastPublished = json;
+  OBR.room.setMetadata({ [CONFIG_KEY]: { ...cfg, updatedAt: Date.now() } }).catch(e => log('config publish failed', e));
+}
+/* The touch table reports back by broadcast: a player-role window (the Cast window) may not write room metadata. */
+function publishStatus(force) {
+  const now = Date.now();
+  if (!force && now - lastStatusAt < 1000) return;
+  lastStatusAt = now;
+  const st = getStatus();
+  const slim = { active: !!st.active, connected: !!st.connected, error: st.error || null, protocol: st.protocol || null, touch: st.touch || null,
+                 counts: st.counts || null, viewport: st.viewport || null, lastMoveName: st.lastMoveName || null, lastMoveDelta: st.lastMoveDelta || null,
+                 lastUnbound: st.lastUnbound || null, plog: (st.plog || []).slice(-12), screen: `${screen.width}×${screen.height}`, playerName, role, version: VERSION, at: now };
+  OBR.broadcast.sendMessage(STATUS_CHANNEL, slim, { destination: 'REMOTE' }).catch(() => {});
+}
+function evaluate() {
+  const s = effectiveSettings();
+  const here = getHere(), cast = isCastWindow();
+  const run = !!s.enabled && (here || (s.autoCast !== false && cast));
+  const diag = { role, playerName, isCastWindow: cast, here, cfgFrom: hasOwnSettings() ? 'local' : remoteConfig ? 'room' : 'defaults', screen: `${screen.width}×${screen.height}`, version: VERSION };
+  const sig = run ? JSON.stringify([s.port, s.displayWidthMm, s.physicalScale, s.snap]) : '';
+  if (!run) {
+    if (bridge) { bridge.stop(); bridge = null; }
+    setStatus({ active: false, connected: false, ...diag, reason: !s.enabled ? 'off' : 'not the touch table — open the Cast window on the TV, or tick "Use THIS window" there' });
+    return;
+  }
+  if (bridge && bridge.sig === sig) return;
+  if (bridge) bridge.stop();
+  setStatus({ active: true, connected: false, error: null, protocol: null, touch: null, plog: [], counts: null, lastMoveName: null, lastMoveDelta: null, lastUnbound: null, ...diag });
+  bridge = new TouchBridge(OBR, { port: s.port, displayWidthMm: s.displayWidthMm, physicalScale: !!s.physicalScale, snap: !!s.snap },
+                           patch => { setStatus({ active: true, ...diag, ...patch }); publishStatus(false); });
+  bridge.sig = sig;
+  bridge.start();
+  publishStatus(true);
+  log('touch table on (port', s.port + ')', cast ? 'cast window' : 'this window');
+}
+
+OBR.onReady(async () => {
+  role = await OBR.player.getRole();
+  try { playerName = await OBR.player.getName(); } catch (_) {}
+  OBR.player.onChange(p => { const changed = p.role !== role || p.name !== playerName; role = p.role; playerName = p.name || playerName; if (changed) { publishConfig(); evaluate(); } });
+  try { remoteConfig = (await OBR.room.getMetadata())[CONFIG_KEY] || null; } catch (_) {}
+  OBR.room.onMetadataChange(md => { const c = md[CONFIG_KEY] || null; if (JSON.stringify(c) !== JSON.stringify(remoteConfig)) { remoteConfig = c; evaluate(); } });
+  OBR.broadcast.onMessage(STATUS_CHANNEL, ev => { if (role === 'GM' && ev.data && typeof ev.data === 'object') setRemote({ ...ev.data, receivedAt: Date.now() }); });
+  window.addEventListener('storage', ev => { if (ev.key === SETTINGS_KEY || ev.key === HERE_KEY || ev.key === null) { publishConfig(); evaluate(); } });
+  publishConfig(); evaluate();
+  setInterval(() => { publishConfig(); evaluate(); if (bridge) publishStatus(true); }, 5000); // heartbeat → GM popover
+  log('ready as', role, playerName ? `"${playerName}"` : '', 'v' + VERSION);
+});
+</script>
+</body>
+</html>

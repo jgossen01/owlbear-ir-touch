@@ -1,0 +1,17 @@
+{
+  "name": "IR Touch",
+  "version": "1.0.0",
+  "manifest_version": 1,
+  "author": "Jens Gossen",
+  "homepage_url": "https://github.com/jgossen01/owlbear-ir-touch",
+  "icon": "/ir-touch/icon.svg",
+  "description": "Move Owlbear tokens with physical minis on an infrared touch frame (table display).",
+  "action": {
+    "title": "IR Touch",
+    "icon": "/ir-touch/icon.svg",
+    "popover": "/ir-touch/index.html",
+    "height": 620,
+    "width": 340
+  },
+  "background_url": "/ir-touch/background.html"
+}
