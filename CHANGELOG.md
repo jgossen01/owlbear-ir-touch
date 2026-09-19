@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **No driver swap any more.** The touch service reads the frame through its vendor-defined HID channel (node-hid)
+  and switches it to direct mode: the contacts go to the service, the OS no longer gets touch input, the mouse stays
+  free. The Zadig/WinUSB step is only a fallback now (`--transport usb`, picked automatically when interface 0 is
+  still on WinUSB). Stopping the service hands the touchscreen back to the OS. Run `npm install` in `touch-server`
+  after updating. Thanks to the DigitalTableTops developer for the Greentouch direct-mode packets.
+- `node probe.js` lists a frame's HID collections, `node direct.js` records what a frame sends in direct mode — for
+  getting other frames to work.
+
 ## 1.0.1 — 2026-09-18
 
 - With **snap on release** on, a phantom contact next to a figure you just lifted could still snap the token onto

@@ -4,13 +4,13 @@
    Reads the frame raw (frame.js), tracks contacts (tracker.js), maps them through the calibration and
    serves them over WebSocket. Several clients may connect at once (the Owlbear table window, the calibration page).
 
-     node server.js [--port 50000] [--vid 0x08d3 --pid 0x1000] [--calibrate] [--verbose]
+     node server.js [--port 50000] [--vid 0x08d3 --pid 0x1000] [--transport auto|hid|usb] [--calibrate] [--verbose]
 
    HTTP  GET  /            status (JSON)
          GET  /calibrate   calibration page — open it full-screen (F11) on the table display
          GET  /calibration current calibration (JSON)     DELETE /calibration  drop it
    WS    server → client
-         { type: 'HELLO', protocol: 'ir-touch', version, frame: { connected, name, maxContacts, error }, calibration: { calibrated, savedAt } }
+         { type: 'HELLO', protocol: 'ir-touch', version, frame: { connected, name, transport, maxContacts, error }, calibration: { calibrated, savedAt } }
          { type: 'FRAME', connected, error }                              frame plugged / unplugged
          { type: 'TOUCH', id, phase: 'down'|'move'|'up', x, y, rx, ry, t }  x,y = fraction of the display picture (0..1), rx,ry raw
          { type: 'CALIBRATED', calibrated, savedAt }
@@ -35,7 +35,7 @@ const FLUSH_MS = 10; // moves are coalesced per contact and flushed at this rate
 const ts = () => new Date().toLocaleTimeString();
 const log = (...a) => console.log(`[${ts()}]`, ...a);
 
-const frame = new Frame({ vid: arg('--vid') ? parseInt(arg('--vid')) : null, pid: arg('--pid') ? parseInt(arg('--pid')) : null });
+const frame = new Frame({ vid: arg('--vid') ? parseInt(arg('--vid')) : null, pid: arg('--pid') ? parseInt(arg('--pid')) : null, transport: arg('--transport', 'auto') });
 const tracker = new Tracker();
 const calib = new Calibration();
 let frameStatus = { connected: false, error: 'starting' };
@@ -43,8 +43,8 @@ let clients = new Set();
 let stats = { touches: 0, downs: 0, sent: 0 };
 
 frame.on('status', st => {
-  frameStatus = { connected: !!st.connected, error: st.error || null, name: st.frame && st.frame.name, maxContacts: st.frame && st.frame.maxContacts };
-  log(st.connected ? `frame connected: ${frameStatus.name} (${frameStatus.maxContacts || '?'} contacts)` : `frame not connected: ${st.error}`);
+  frameStatus = { connected: !!st.connected, error: st.error || null, name: st.frame && st.frame.name, transport: st.frame && st.frame.transport, maxContacts: st.frame && st.frame.maxContacts };
+  log(st.connected ? `frame connected: ${frameStatus.name} (${frameStatus.maxContacts || '?'} contacts, ${frameStatus.transport === 'hid' ? 'HID direct mode' : 'raw USB'})` : `frame not connected: ${st.error}`);
   broadcast({ type: 'FRAME', ...frameStatus });
 });
 frame.on('report', rep => tracker.feed(rep));
@@ -102,4 +102,4 @@ server.listen(PORT, '127.0.0.1', () => {
   setInterval(() => { if (!frame.dev) frame.open(); }, 3000); // frame plugged in later / driver swapped
   if (argv.includes('--calibrate')) { const { exec } = require('child_process'); exec(`${process.platform === 'win32' ? 'start ""' : 'xdg-open'} http://localhost:${PORT}/calibrate`); }
 });
-process.on('SIGINT', () => { log('bye'); tracker.stop(); frame.close(); process.exit(0); });
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { log('bye'); tracker.stop(); frame.close(); process.exit(0); }); // close() hands the touch screen back to the OS (SIGHUP = console window closed)

@@ -1,19 +1,19 @@
 # IR Touch for Owlbear Rodeo
 
 Move Owlbear Rodeo tokens by moving **physical miniatures** on a TV that lies flat in the table, with an
-**infrared multitouch frame** on top. A small service on the table PC reads the frame raw over USB and streams the
+**infrared multitouch frame** on top. A small service on the table PC reads the frame directly and streams the
 contacts to the extension; the extension decides which token a contact belongs to and drags it along — including
 the figure being lifted and set down somewhere else.
 
 <!-- screenshot / gif of the table goes here -->
 
 Tested hardware: **Greentouch GT-IR-F43** infrared touch frame (43″, 50 contacts; shows up as
-InfraredMultiTouch "Touch Device,43-50P", USB `08D3:1000`). Any HID multitouch frame with the same report layout
-should work; other layouts need a small change in `touch-server/frame.js`.
+InfraredMultiTouch "Touch Device,43-50P", USB `08D3:1000`). Other frames: see *Other frames* below.
 
 ## What you need
 
-- A Windows PC connected to the TV in the table, with the IR frame plugged in over USB
+- A Windows PC connected to the TV in the table, with the IR frame plugged in over USB (direct mode uses plain HID,
+  so macOS and Linux should work too — untested)
 - [Node.js](https://nodejs.org) 22 or newer on that PC
 - Chrome or Edge on that PC (it runs Owlbear's Cast window on the TV)
 - An Owlbear Rodeo room (the GM installs the extension, everybody can keep playing as usual)
@@ -28,9 +28,31 @@ cd owlbear-ir-touch/touch-server
 npm install
 ```
 
-Windows does not let programs read the touch reports of a touchscreen (`ReadFile` → access denied), so the frame's
-touch interface is moved to the generic **WinUSB** driver — the OS then no longer sees a touchscreen at all (no cursor
-jumps, no pinch-zoom from two standing minis):
+Start the service: `node server.js` (or `npm start`). It prints whether the frame was found:
+
+```
+frame connected: Greentouch GT-IR-F43 (InfraredMultiTouch 43-50P) (50 contacts, HID direct mode)
+```
+
+No driver change is needed. The service talks to the frame's vendor-defined HID channel and switches the frame to
+**direct mode**: the frame sends its contacts to the service and stops acting as a touchscreen for the OS — no cursor
+jumps, no pinch-zoom from two standing minis, the mouse stays free. When the service stops (Ctrl+C, window closed) it
+switches the frame back and the OS touchscreen works again. If the service is killed hard, the touchscreen stays off
+until the service is started and stopped once more or the frame is replugged.
+
+```
+node server.js [--port 50000] [--vid 0x08d3 --pid 0x1000] [--transport auto|hid|usb] [--calibrate] [--verbose]
+```
+
+To start it with Windows: Task Scheduler → "At log on" → `node.exe C:\…\owlbear-ir-touch\touch-server\server.js`,
+or a shortcut in `shell:startup`.
+
+<details>
+<summary>Fallback: raw USB through WinUSB (Windows, only if direct mode does not work with your frame)</summary>
+
+Windows does not let programs read the touch reports of a touchscreen (`ReadFile` → access denied). A frame without a
+usable vendor channel can still be read by moving its touch interface to the generic **WinUSB** driver — the OS then
+no longer sees a touchscreen at all:
 
 1. Download [Zadig](https://zadig.akeo.ie), start it, **Options → List All Devices**.
 2. Pick **"Touch Device,43-50P (Interface 0)"** (USB ID `08D3 1000 00`, current driver `HidUsb`).
@@ -39,16 +61,12 @@ jumps, no pinch-zoom from two standing minis):
    the glass — then give it WinUSB the same way.
 
 Undo: Device Manager → the "Touch Device,43-50P" entry under USB devices → Update driver → Browse my computer →
-Let me pick → **USB Input Device**.
+Let me pick → **USB Input Device**. (Do the same if you used an earlier version of this project with Zadig and want
+direct mode now, then replug the frame.)
 
-Start the service: `node server.js` (or `npm start`). It prints whether the frame was found.
+The service picks raw USB by itself when it finds no vendor HID channel; `--transport usb` forces it.
 
-```
-node server.js [--port 50000] [--vid 0x08d3 --pid 0x1000] [--calibrate] [--verbose]
-```
-
-To start it with Windows: Task Scheduler → "At log on" → `node.exe C:\…\owlbear-ir-touch\touch-server\server.js`,
-or a shortcut in `shell:startup`.
+</details>
 
 ### 2. Calibrate once
 
@@ -123,7 +141,8 @@ The constants live at the top of `extension/touch.js`.
 | `… is blocked by the browser` | Chrome/Edge local network access check | Start the browser on the table PC with `--disable-features=LocalNetworkAccessChecks`, reload the room |
 | `No touch service on ws://localhost:50000` | Service not running, or wrong port | `node server.js` on the table PC; check the port |
 | `Something answered on port … but it is not the IR touch service` | Another program on that port | Change the port on both sides |
-| `frame NOT connected — frame not found on USB` | Frame unplugged or not on WinUSB | Plug it in; Zadig step above |
+| `frame NOT connected — frame not found on USB` | Frame unplugged, or `npm install` was not run after an update (node-hid missing) | Plug it in; `npm install` in `touch-server` |
+| Touchscreen dead in Windows after the service crashed | The frame is still in direct mode | Start and stop the service once, or replug the frame |
 | `NOT calibrated (raw 1:1)` | No calibration yet | Step 2 |
 | Token jumps to a hand next to the figure | Hand landed within 0.6 cells of the token | Lift the figure a little later; see *Diagnostics* for what got bound |
 
@@ -135,7 +154,7 @@ server → client
 
 | message | meaning |
 | --- | --- |
-| `{ type: 'HELLO', protocol: 'ir-touch', version, port, frame: { connected, name, maxContacts, error }, calibration: { calibrated, savedAt } }` | first message after connect |
+| `{ type: 'HELLO', protocol: 'ir-touch', version, port, frame: { connected, name, transport, maxContacts, error }, calibration: { calibrated, savedAt } }` | first message after connect |
 | `{ type: 'TOUCH', id, phase: 'down' \| 'move' \| 'up', x, y, rx, ry, t }` | `x, y` = fraction of the display picture (0..1), `rx, ry` raw frame units (0..32767), `t` ms; `up` carries `held` (ms) |
 | `{ type: 'FRAME', connected, error }` | frame plugged / unplugged |
 | `{ type: 'CALIBRATED', calibrated, savedAt }` | calibration changed |
@@ -158,9 +177,16 @@ if you use a different path, change the four `/ir-touch/…` entries in `manifes
 
 ## How the frame behaves (learnt on the table)
 
-- Interface 0 carries input report id 2 (62 bytes): six 10-byte slots `[flags][contact id][x u16][y u16][w u16][h u16]`
+- Interface 0 has three HID collections: the touch screen (input report id 2), device configuration (feature 4) and a
+  **vendor-defined** one (usage page `0xFF00`, report id 5, 64 bytes in and out). Writing `05 1F F7 FC 12` (zero-padded
+  to 64 bytes) to the vendor collection switches the frame to direct mode, `05 1F F7 FC 14` switches back; the frame
+  acknowledges with `05 1F F7 FC 13` / `… 15`. In direct mode the contacts arrive under report id 5 in the same slot
+  layout as report 2, continuously (~400 Hz) while anything is on the glass, and the touch screen collection stays
+  silent. Vendor collections can be opened by any program; touch screen, mouse and keyboard collections cannot.
+  Thanks to the developer of [DigitalTableTops](https://github.com/DigitalTableTops/digital-tabletops) for the packets.
+- Report id 2 (62 bytes): six 10-byte slots `[flags][contact id][x u16][y u16][w u16][h u16]`
   — flags bit 0 tip, bit 1 in-range, bit 2 confidence; empty slots have id `0xFF`; byte 61 = contact count.
-- The frame only starts sending on interface 0 after the host has **fetched the HID report descriptor** (which the
+- Raw USB only: the frame only starts sending on interface 0 after the host has **fetched the HID report descriptor** (which the
   HID driver does and WinUSB does not). `frame.js` does that on open; before that the frame falls back to mouse
   emulation on interface 1.
 - Touch-down arrives as one report with confidence only, then tip; lift as tip = 0 once. A contact that simply
@@ -168,6 +194,14 @@ if you use a different path, change the four `/ir-touch/…` entries in `manifes
 - Feature report 3 = maximum contact count (50). The "device mode" feature report (4) is ignored by this frame.
 - A mini's base shows up as **one** contact, usually with a stable id for as long as it stands; a hand on the glass
   is a burst of short extra contacts (ids 1–4, < 300 ms).
+
+## Other frames
+
+`node probe.js` (in `touch-server`, Windows with interface 0 on WinUSB, or Linux/macOS) prints the HID collections of a
+frame and marks vendor-defined ones; `node direct.js` sends the Greentouch direct-mode packet and records what comes
+back. Frames from other makers use other packets and sometimes another slot layout — add the USB id to `KNOWN` in
+`touch-server/frame.js` and adapt `parseReport`. A frame that is a plain HID multitouch digitizer with the report
+layout above works over raw USB (WinUSB fallback) with `--vid/--pid`.
 
 ## Works with D&D Sync
 
@@ -190,9 +224,9 @@ node scripts/set-version.js 1.0.1   # the only place a version is typed
 Release: bump the version, update `CHANGELOG.md`, tag `v1.0.1`, push. dndsync.com pulls the tagged release in its
 Docker build.
 
-Table test checklist before a release: service finds the frame → calibrate → Cast window connects → drag a figure →
+Table test checklist before a release: service finds the frame (HID direct mode, Windows cursor stays put) → calibrate → Cast window connects → drag a figure →
 lift and set it down elsewhere → drag two figures at once → a hand on the glass moves nothing → snap on release →
-snap on, lift a figure and let a phantom appear → nothing moves.
+snap on, lift a figure and let a phantom appear → nothing moves → stop the service, the Windows touchscreen works again.
 
 ## License
 
