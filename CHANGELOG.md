@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 — 2026-09-19
 
 - **No driver swap any more.** The touch service reads the frame through its vendor-defined HID channel (node-hid)
   and switches it to direct mode: the contacts go to the service, the OS no longer gets touch input, the mouse stays
