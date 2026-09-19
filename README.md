@@ -184,7 +184,7 @@ if you use a different path, change the four `/ir-touch/…` entries in `manifes
   acknowledges with `05 1F F7 FC 13` / `… 15`. In direct mode the contacts arrive under report id 5 in the same slot
   layout as report 2, continuously (~400 Hz) while anything is on the glass, and the touch screen collection stays
   silent. Vendor collections can be opened by any program; touch screen, mouse and keyboard collections cannot.
-  Thanks to the developer of [DigitalTableTops](https://github.com/DigitalTableTops/digital-tabletops) for the packets.
+  The packets come from the developer of DigitalTableTops — see *Thanks*.
 - Report id 2 (62 bytes): six 10-byte slots `[flags][contact id][x u16][y u16][w u16][h u16]`
   — flags bit 0 tip, bit 1 in-range, bit 2 confidence; empty slots have id `0xFF`; byte 61 = contact count.
 - Raw USB only: the frame only starts sending on interface 0 after the host has **fetched the HID report descriptor** (which the
@@ -228,6 +228,14 @@ Docker build.
 Table test checklist before a release: service finds the frame (HID direct mode, Windows cursor stays put) → calibrate → Cast window connects → drag a figure →
 lift and set it down elsewhere → drag two figures at once → a hand on the glass moves nothing → snap on release →
 snap on, lift a figure and let a phantom appear → nothing moves → stop the service, the Windows touchscreen works again.
+
+## Thanks
+
+Direct mode exists thanks to the developer of **[DigitalTableTops](https://digitaltabletops.com)**, who shared how his
+touch client talks to these frames and the Greentouch packets. If you would rather buy a table than build one: he
+sells ready-made wooden TV frames with the IR touch frame built in at [digitaltabletops.com](https://digitaltabletops.com)
+(about $800 at the time of writing — hard to beat without building it yourself), and his
+[Foundry VTT module](https://github.com/DigitalTableTops/digital-tabletops) is on GitHub.
 
 ## License
 
