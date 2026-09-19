@@ -1,3 +1,4 @@
 node_modules/
 touch-server/calibration.json
 .DS_Store
+touch-server/direct-*.txt

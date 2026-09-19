@@ -1,22 +1,36 @@
 'use strict';
-/* IR frame reader (raw USB via WinUSB/libusb).
+/* IR frame reader. Two transports, tried in this order:
+     hid  the frame's vendor-defined HID collection (usage page 0xFF00), read through the normal OS HID driver with
+          node-hid. An output report switches the frame to "direct mode": it sends the contacts on that collection and
+          stops feeding the OS touch screen — no driver swap, no cursor jumps.
+     usb  raw USB via WinUSB/libusb, for a frame whose interface 0 was moved to WinUSB (Zadig).
    Tested with a Greentouch GT-IR-F43 frame ("InfraredMultiTouch-61 / Touch Device,43-50P", VID 08D3, PID 1000) — a standard HID multitouch digitizer:
      interface 0: EP 0x81 IN, input report id 2, 62 bytes:
        6 slots × 10 bytes  [flags(bit0 tip, bit1 in-range, bit2 confidence)] [contact id, 0xFF = empty] [x u16] [y u16] [w u16] [h u16]
        byte 61 = contact count (hybrid mode: the first report of a burst carries the total, follow-ups 0)
        x, y in 0..32767 over the frame's active area
+     interface 0, vendor collection: report id 5, 64 bytes in/out. Direct mode on = 05 1F F7 FC 12, off = 05 1F F7 FC 14
+       (packets by courtesy of the DigitalTableTops developer); the frame acknowledges with 05 1F F7 FC 13 / 15 and then
+       sends the same six slots + contact count under report id 5, continuously (~400 Hz) while anything is on the glass.
      interface 1: mouse/keyboard emulation (not used)
-   The frame only starts sending on interface 0 once the host has fetched the HID report descriptor —
+   usb transport: the frame only starts sending on interface 0 once the host has fetched the HID report descriptor —
    with the OS driver replaced by WinUSB we have to do that ourselves (Windows refuses raw reads of touch devices). */
 const usb = require('usb');
 const EventEmitter = require('events');
+let HID = null;
+try { HID = require('node-hid'); } catch (_) {} // optional: without it only the usb transport is available
 
-const KNOWN = [{ vid: 0x08d3, pid: 0x1000, name: 'Greentouch GT-IR-F43 (InfraredMultiTouch 43-50P)' }];
+const KNOWN = [{ vid: 0x08d3, pid: 0x1000, name: 'Greentouch GT-IR-F43 (InfraredMultiTouch 43-50P)', maxContacts: 50 }];
 const RAW_MAX = 32767;
+const VENDOR_PAGE = 0xff00, REPORT_LEN = 64;
+const DIRECT_ON = [5, 0x1f, 0xf7, 0xfc, 0x12], DIRECT_OFF = [5, 0x1f, 0xf7, 0xfc, 0x14];
+const padded = a => a.concat(new Array(REPORT_LEN - a.length).fill(0));
 
-/* One input report (id 2, 62 bytes) → { count, contacts }. Pure, so it can be unit-tested without a frame. */
+/* One input report (id 2 = touch screen, 62 bytes; id 5 = direct mode, 64 bytes, same layout) → { count, contacts }.
+   Pure, so it can be unit-tested without a frame. */
 function parseReport(buf) {
-  if (!buf || buf.length < 62 || buf[0] !== 2) return null;
+  if (!buf || buf.length < 62 || (buf[0] !== 2 && buf[0] !== 5)) return null;
+  if (buf[0] === 5 && buf[1] === 0x1f && buf[2] === 0xf7 && buf[3] === 0xfc) return null; // acknowledgement of a mode switch
   const contacts = [];
   for (let i = 0; i < 6; i++) {
     const o = 1 + i * 10, flags = buf[o], id = buf[o + 1];
@@ -29,22 +43,56 @@ function parseReport(buf) {
 class Frame extends EventEmitter {
   constructor(opts = {}) {
     super();
-    this.opts = { vid: null, pid: null, iface: 0, ...opts };
-    this.dev = null; this.ep = null; this.if = null;
+    this.opts = { vid: null, pid: null, iface: 0, transport: 'auto', hidLib: HID, hotplug: true, ...opts }; // hidLib / hotplug: for tests (hotplug listeners keep the process alive)
+    this.dev = null; this.ep = null; this.if = null; this.hid = false;
     this.reports = 0;
     this.info = null;
     this.lastReportAt = 0;
-    const hot = usb.usb && typeof usb.usb.on === 'function' ? usb.usb : null; // usb@2: hotplug events live on the legacy `usb` object
+    const hot = this.opts.hotplug && usb.usb && typeof usb.usb.on === 'function' ? usb.usb : null; // usb@2: hotplug events live on the legacy `usb` object
     if (hot) { hot.on('attach', () => setTimeout(() => this.open(), 800)); hot.on('detach', d => { if (this.dev && d === this.dev) this.onLost('unplugged'); }); }
   }
-  match(d) {
-    const dd = d.deviceDescriptor;
-    if (this.opts.vid) return dd.idVendor === this.opts.vid && (!this.opts.pid || dd.idProduct === this.opts.pid);
-    return KNOWN.some(k => k.vid === dd.idVendor && k.pid === dd.idProduct);
+  match(vid, pid) {
+    if (this.opts.vid) return vid === this.opts.vid && (!this.opts.pid || pid === this.opts.pid);
+    return KNOWN.some(k => k.vid === vid && k.pid === pid);
+  }
+  describe(vid, pid, transport) {
+    const known = KNOWN.find(k => k.vid === vid && k.pid === pid) || {};
+    return { vid, pid, transport, name: known.name || 'unknown frame', maxContacts: known.maxContacts || null }; // usb reads the real maximum from feature report 3
   }
   open() {
     if (this.dev) return true;
-    const dev = usb.getDeviceList().find(d => this.match(d));
+    if (this.opts.transport !== 'usb') {
+      const r = this.openHid();
+      if (r !== null) return r;
+      if (this.opts.transport === 'hid') { this.emit('status', { connected: false, error: this.opts.hidLib ? 'no vendor HID collection of the frame found — is it plugged in, and is interface 0 on the normal HID driver (not WinUSB)?' : 'node-hid is not installed (npm install)' }); return false; }
+    }
+    return this.openUsb();
+  }
+  /* null = no vendor collection to be seen (frame absent, or interface 0 on WinUSB) → try usb */
+  openHid() {
+    const HID = this.opts.hidLib;
+    if (!HID) return null;
+    let d;
+    try { d = HID.devices().find(d => this.match(d.vendorId, d.productId) && d.usagePage === VENDOR_PAGE); } catch (_) { return null; }
+    if (!d) return null;
+    let dev = null;
+    try {
+      dev = new HID.HID(d.path);
+      dev.on('data', buf => this.onReport(buf));
+      dev.on('error', e => { if (this.dev === dev) this.onLost('read error: ' + e.message); });
+      dev.write(padded(DIRECT_ON));
+      this.dev = dev; this.hid = true;
+      this.info = this.describe(d.vendorId, d.productId, 'hid');
+      this.emit('status', { connected: true, error: null, frame: this.info });
+      return true;
+    } catch (e) {
+      try { dev && dev.close(); } catch (_) {}
+      this.emit('status', { connected: false, error: 'HID: ' + e.message });
+      return false;
+    }
+  }
+  openUsb() {
+    const dev = usb.getDeviceList().find(d => this.match(d.deviceDescriptor.idVendor, d.deviceDescriptor.idProduct));
     if (!dev) { this.emit('status', { connected: false, error: 'frame not found on USB' }); return false; }
     try {
       dev.open();
@@ -54,7 +102,7 @@ class Frame extends EventEmitter {
       if (!ep) throw new Error('no IN endpoint on interface ' + this.opts.iface);
       this.dev = dev; this.if = iface; this.ep = ep;
       const dd = dev.deviceDescriptor;
-      this.info = { vid: dd.idVendor, pid: dd.idProduct, name: (KNOWN.find(k => k.vid === dd.idVendor && k.pid === dd.idProduct) || {}).name || 'unknown frame', maxContacts: null };
+      this.info = this.describe(dd.idVendor, dd.idProduct, 'usb');
       ep.on('data', buf => this.onReport(buf));
       ep.on('error', e => { if (this.dev) this.onLost('read error: ' + e.message); });
       this.activate().then(() => {
@@ -63,7 +111,7 @@ class Frame extends EventEmitter {
       }).catch(e => this.onLost('activation failed: ' + e.message));
       return true;
     } catch (e) {
-      const hint = /NOT_SUPPORTED|ACCESS|BUSY/i.test(e.message) ? ' — is interface 0 of the frame on the WinUSB driver (Zadig)? Is another program reading it?' : '';
+      const hint = /NOT_SUPPORTED|ACCESS|BUSY/i.test(e.message) ? (this.opts.hidLib ? ' — is another program reading the frame?' : ' — node-hid is missing (npm install), and for raw USB interface 0 of the frame must be on the WinUSB driver (Zadig)') : '';
       this.emit('status', { connected: false, error: e.message + hint });
       try { dev.close(); } catch (_) {}
       return false;
@@ -90,12 +138,23 @@ class Frame extends EventEmitter {
   }
   onLost(reason) {
     const dev = this.dev; this.dev = null;
+    if (this.hid) {
+      this.hid = false;
+      dev.removeAllListeners('data'); dev.removeAllListeners('error'); dev.on('error', () => {});
+      try { dev.close(); } catch (_) {}
+      this.emit('status', { connected: false, error: reason });
+      return;
+    }
     try { this.ep && this.ep.stopPoll(); } catch (_) {}
     try { this.if && this.if.release(true, () => { try { dev.close(); } catch (_) {} }); } catch (_) { try { dev && dev.close(); } catch (_) {} }
     this.ep = null; this.if = null;
     this.emit('status', { connected: false, error: reason });
   }
-  close() { if (this.dev) this.onLost('closed'); }
+  close() {
+    if (!this.dev) return;
+    if (this.hid) { try { this.dev.write(padded(DIRECT_OFF)); } catch (_) {} } // hand the touch screen back to the OS
+    this.onLost('closed');
+  }
 }
 
 module.exports = { Frame, RAW_MAX, KNOWN, parseReport };

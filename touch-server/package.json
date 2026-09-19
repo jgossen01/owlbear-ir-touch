@@ -1,7 +1,7 @@
 {
   "name": "owlbear-ir-touch-server",
   "version": "1.0.1",
-  "description": "Reads an IR multitouch frame raw over WinUSB/libusb and streams touch contacts to the IR Touch extension for Owlbear Rodeo over WebSocket.",
+  "description": "Reads an IR multitouch frame (HID direct mode, or raw over WinUSB/libusb) and streams touch contacts to the IR Touch extension for Owlbear Rodeo over WebSocket.",
   "main": "server.js",
   "license": "MIT",
   "private": true,
@@ -10,6 +10,7 @@
     "test": "node --test \"test/*.test.js\""
   },
   "dependencies": {
+    "node-hid": "^3.4.0",
     "usb": "^2.18.0",
     "ws": "^8.18.0"
   }
