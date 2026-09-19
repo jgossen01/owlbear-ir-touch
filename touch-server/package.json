@@ -10,6 +10,7 @@
     "test": "node --test \"test/*.test.js\""
   },
   "dependencies": {
+    "node-hid": "^3.4.0",
     "usb": "^2.18.0",
     "ws": "^8.18.0"
   }
