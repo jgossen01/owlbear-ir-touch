@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- The touch service is confirmed to work on macOS (HID direct mode; all contacts arrive although macOS itself has no
+  multitouch support for touchscreens).
+
 ## 1.1.0 — 2026-09-19
 
 - **No driver swap any more.** The touch service reads the frame through its vendor-defined HID channel (node-hid)

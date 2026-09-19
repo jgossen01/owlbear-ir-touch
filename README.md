@@ -12,8 +12,8 @@ InfraredMultiTouch "Touch Device,43-50P", USB `08D3:1000`). Other frames: see *O
 
 ## What you need
 
-- A Windows PC connected to the TV in the table, with the IR frame plugged in over USB (direct mode uses plain HID,
-  so macOS and Linux should work too — untested)
+- A Windows PC or a Mac connected to the TV in the table, with the IR frame plugged in over USB (direct mode uses
+  plain HID, so macOS's missing multitouch support for touchscreens does not matter; Linux should work too — untested)
 - [Node.js](https://nodejs.org) 22 or newer on that PC
 - Chrome or Edge on that PC (it runs Owlbear's Cast window on the TV)
 - An Owlbear Rodeo room (the GM installs the extension, everybody can keep playing as usual)
