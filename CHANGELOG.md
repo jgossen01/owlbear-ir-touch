@@ -1,7 +1,14 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 — 2026-09-25
 
+- **Figures that stand are put down.** A mini that stays still on the glass for a moment now counts as set down —
+  snapped to its cell (with snap on) without having to lift it. Its contact stays bound, so it can be dragged on.
+- **No more shaking.** Contact positions are smoothed (One Euro filter); the jitter of a standing mini sends no
+  updates to the room at all, a moving one follows with little lag.
+- **Dropouts mid-drag are bridged.** When the frame loses a mini while it is dragged and finds it again close by
+  (new contact id), the drag carries on instead of snapping the figure halfway and re-binding it. A phantom contact
+  next to a lifted figure does not take it over (the 150 ms guard applies).
 - The touch service is confirmed to work on macOS (HID direct mode; all contacts arrive although macOS itself has no
   multitouch support for touchscreens).
 

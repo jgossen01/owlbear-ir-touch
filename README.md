@@ -121,14 +121,21 @@ No Cast? Open a second browser window on the TV, join the room as a player, open
 ## How the binding works
 
 - **Under the contact.** A touch-down on a token (or within 0.6 cells of its bounds) binds that contact to the
-  token. The offset between finger and token centre is kept, so the token does not jump. The token follows every
-  move of that contact until it is lifted.
+  token. The offset between finger and token centre is kept, so the token does not jump. The token follows that
+  contact until it is lifted; its position is smoothed (One Euro filter), so the frame's jitter does not shake it.
+- **Standing.** A mini is not a finger — it is put down and stays on the glass. A contact that has not moved more
+  than 0.2 cells for 0.35 s counts as put down: with snap on the token is centred on its cell right away, without
+  waiting for a lift. The contact stays bound; jitter below 0.35 cells sends no updates to the room. Moving the mini
+  again drags it on from where it stands, without a jump.
+- **Lost contact.** When the frame loses a mini mid-drag (a hand shading the IR, a fast move) and finds it again
+  under a new id within 0.3 s and 1.2 cells, the drag goes on with the same figure instead of snapping it halfway.
+  The new contact must live 150 ms (phantom guard), else the figure counts as lifted where it was lost.
 - **Lifted and set down.** A touch-down on empty map re-binds the figure lifted most recently (within 12 s) — the
   player picked the mini up and put it down somewhere else. Two plausibility checks: the figure cannot have travelled
   faster than a hand carries it (40 cells/s plus 1.5 cells slack), and while another figure is actively dragged, a
   new contact elsewhere is that player's hand, not a set-down.
 - **Phantom guard.** IR frames report short phantom contacts (30–500 ms) next to a moving figure. A contact bound by
-  the lifted rule moves the token only after it has lived 150 ms.
+  the lifted rule, or taking over a lost one, moves the token only after it has lived 150 ms.
 - **Hands.** A hand on the glass next to a figure is a separate contact and binds to nothing. A second contact on a
   token that is already held is ignored.
 
@@ -226,7 +233,8 @@ Release: bump the version, update `CHANGELOG.md`, tag `v1.0.1`, push. dndsync.co
 Docker build.
 
 Table test checklist before a release: service finds the frame (HID direct mode, Windows cursor stays put) → calibrate → Cast window connects → drag a figure →
-lift and set it down elsewhere → drag two figures at once → a hand on the glass moves nothing → snap on release →
+lift and set it down elsewhere → drag a figure and leave it standing (snaps after a moment, no lift needed) → wiggle
+it slightly (nothing moves) → drag it on (no jump) → drag two figures at once → a hand on the glass moves nothing → snap on release →
 snap on, lift a figure and let a phantom appear → nothing moves → stop the service, the Windows touchscreen works again.
 
 ## Thanks

@@ -11,6 +11,15 @@
    "lifted" rule, with plausibility checks). The binding holds for the lifetime of the contact; a hand next to
    the figure is a separate contact and binds to nothing.
 
+   A miniature is not a finger: it is put down and stays. So a bound contact is
+     dragging  → the token follows it (position smoothed with a One Euro filter, at most every TOUCH_APPLY_MS);
+     standing  → it has not moved more than STILL_CELLS for SETTLE_MS: the figure counts as put down (snapped when
+                 snap is on) while the contact stays bound; the frame's jitter is ignored — no updates for the
+                 whole room — until it moves more than RESUME_CELLS, then it drags on without a jump;
+     lost      → it vanished mid-drag (IR shadow, a hand in the way): for LOST_MS a new contact within LOST_CELLS
+                 carries on with the same figure instead of dropping (and snapping) it halfway.
+   Stillness and jitter are measured in cells on the display, so a viewport change is not a moving figure.
+
    Physical scale: with the display width known, one grid cell is forced to exactly one inch (tick()).
    No imports — the module is testable in Node with a fake OBR (test/binding.test.mjs). */
 export const PROTOCOL = 'ir-touch';
@@ -23,6 +32,14 @@ export const LIFT_SPEED_CELLS = 40;    // a carried figure travels at most this 
 export const LIFT_SLACK_CELLS = 1.5;   // … plus this much regardless of time (finger that lost contact mid-drag and keeps going)
 export const LIFT_DRAG_BLOCK_MS = 1000; // another figure moved within this → a new contact on empty map is that hand, not a set-down figure …
 export const LIFT_DRAG_GRACE_S = 0.5;  // … unless the lift was this recent (finger flicker while two fingers drag)
+export const STILL_CELLS = 0.2;        // a contact that stays within this …
+export const SETTLE_MS = 350;          // … for this long stands: the figure is put down (snapped), the contact stays bound
+export const RESUME_CELLS = 0.35;      // a standing contact must move this far to drag again (the frame jitters by a few mm)
+export const LOST_MS = 300;            // a contact gone mid-drag is kept this long …
+export const LOST_CELLS = 1.2;         // … for a new contact this close by to carry on with (IR dropout, a hand in the way)
+export const OFFSET_EASE_S = 0.12;     // after a pause the token eases back under the contact at this time constant
+export const EURO = { minCutoff: 1.5, beta: 2, dCutoff: 1 }; // One Euro filter; beta per cell/s
+const TICK_MS = 16;
 export const HELLO_TIMEOUT_MS = 3000;  // something answered on the port but never said HELLO → not our service
 export const LNA_TIMEOUT_MS = 5000;    // socket stuck in CONNECTING → the browser blocks local network access
 export const RECONNECT_MS = 5000;
@@ -48,7 +65,8 @@ export class TouchBridge {
     this.lastVp = null;        // { left, top, width, height } canvas units of the visible screen
     this.lastViewport = '';
     this.dpiCache = 0;
-    this.contacts = new Map(); // contact id → { tokenId, name, offset, target, timer, armedAt, downAt, movedAt }
+    this.contacts = new Map(); // contact id → { tokenId, name, state: 'drag'|'standing', offset, base, target, f (filtered fraction), … }
+    this.lost = new Map();     // contacts gone mid-drag, waiting LOST_MS for a new contact close by
     this.lifted = null;        // { tokenId, name, at } figure lifted most recently → re-binds a touch-down on empty map
     this.chain = Promise.resolve(); // token updates are applied one after another
     this.plog = [];            // protocol / diagnostic log → popover
@@ -67,8 +85,7 @@ export class TouchBridge {
   stop() {
     this.stopped = true;
     clearInterval(this.timer); clearTimeout(this.tokenTimer); clearTimeout(this.reconnectTimer); clearTimeout(this.connectTimer); clearTimeout(this.helloTimer);
-    for (const c of this.contacts.values()) clearTimeout(c.timer);
-    this.contacts.clear(); this.mode = null;
+    this.release(); this.mode = null;
     if (this.unsubItems) this.unsubItems();
     if (this.unsubGrid) this.unsubGrid();
     if (this.ws) { try { this.ws.close(); } catch (_) {} this.ws = null; }
@@ -117,7 +134,7 @@ export class TouchBridge {
   onOpen(ws, url) {
     clearTimeout(this.connectTimer);
     this.note('ws connected', url);
-    this.mode = null; this.contacts.clear();
+    this.mode = null; this.release();
     this.onStatus({ connected: true, error: null, protocol: null });
     clearTimeout(this.helloTimer);
     this.helloTimer = setTimeout(() => {
@@ -153,7 +170,7 @@ export class TouchBridge {
   }
   touchStatus() {
     const t = this.touch || {};
-    return { frame: !!(t.frame && t.frame.connected), frameName: t.frame && t.frame.name, frameError: t.frame && t.frame.error, calibrated: !!(t.calibration && t.calibration.calibrated), version: t.version, contacts: this.contacts.size, lifted: this.lifted && Date.now() - this.lifted.at < LIFT_BIND_MS ? this.lifted.name : null };
+    return { frame: !!(t.frame && t.frame.connected), frameName: t.frame && t.frame.name, frameError: t.frame && t.frame.error, calibrated: !!(t.calibration && t.calibration.calibrated), version: t.version, contacts: this.contacts.size, standing: [...this.contacts.values()].filter(c => c.state === 'standing').length, lifted: this.lifted && Date.now() - this.lifted.at < LIFT_BIND_MS ? this.lifted.name : null };
   }
 
   /* ── tokens + viewport ── */
@@ -202,10 +219,23 @@ export class TouchBridge {
   onTouch(m) {
     const v = this.lastVp; if (!v) { this.counts.ignored++; return; }
     const now = Date.now();
-    const p = { x: v.left + m.x * v.width, y: v.top + m.y * v.height };
+    const p = this.toCanvas(m);
     const dpi = this.dpiCache || 150;
     if (m.phase === 'down') {
-      const boundIds = new Set([...this.contacts.values()].map(c => c.tokenId));
+      // a contact that vanished mid-drag a moment ago and reappears close by is the same figure
+      for (const [id, c] of this.lost) {
+        if (this.cellsBetween(m, c.f) > LOST_CELLS) continue;
+        // a hand next to a lifted figure makes phantom contacts too: like the "lifted" rule, the new contact takes
+        // over only once it has lived LIFT_ARM_MS; one that dies before is dropped and the figure stays lost
+        this.lost.delete(id);
+        c.saved = { f: c.f, df: c.df, fAt: c.fAt, raw: c.raw, rawAt: c.rawAt, lostAt: c.lostAt };
+        c.armedAt = now + LIFT_ARM_MS; c.raw = { x: m.x, y: m.y }; c.rawAt = now;
+        this.contacts.set(m.id, c);
+        this.note('touch #' + m.id, 'down → carries on with', c.name, `(#${id} lost ${Math.round(now - (c.lostSince || now))} ms ago)`);
+        this.loop();
+        return;
+      }
+      const boundIds = new Set([...this.contacts.values(), ...this.lost.values()].map(c => c.tokenId));
       let tok = this.tokenAt(p, dpi), how = 'under contact';
       if (tok && boundIds.has(tok.id)) { this.counts.ignored++; this.noteThrottled('held:' + tok.id, 'touch #' + m.id, 'down on', tok.name, '— already held by another contact, ignored'); return; }
       let why = '';
@@ -232,35 +262,109 @@ export class TouchBridge {
       }
       const centre = { x: tok.x + tok.w / 2, y: tok.y + tok.h / 2 };
       // keep the offset between contact and token centre — a finger at the edge must not make the token jump;
-      // a figure set down on empty map (lifted rule) is centred under the contact
-      const offset = how === 'under contact' ? { x: centre.x - p.x, y: centre.y - p.y } : { x: 0, y: 0 };
-      const c = { tokenId: tok.id, name: tok.name, offset, target: null, timer: null, downAt: now, movedAt: 0, armedAt: 0 };
+      // a figure set down on empty map (lifted rule) is centred under the contact. The "lifted" rule may catch a
+      // phantom contact of the frame (they live 30–500 ms next to a figure) — such a contact moves the token only
+      // once it has survived LIFT_ARM_MS.
+      const under = how === 'under contact';
+      const offset = under ? { x: centre.x - p.x, y: centre.y - p.y } : { x: 0, y: 0 };
+      const f = { x: m.x, y: m.y };
+      const c = { tokenId: tok.id, name: tok.name, state: 'drag', offset, base: { ...offset }, target: null, timer: null, downAt: now, movedAt: 0,
+        armedAt: under ? 0 : now + LIFT_ARM_MS, moved: !under, dirty: !under, raw: { ...f }, rawAt: now, f, df: { x: 0, y: 0 }, fAt: now,
+        anchor: { ...f }, stillSince: now, lostAt: 0 };
       this.contacts.set(m.id, c);
       if (this.lifted && this.lifted.tokenId === tok.id) this.lifted = null;
       this.note('touch #' + m.id, 'down →', tok.name, '(' + how + ')', this.screenPct(p));
-      if (how !== 'under contact') {
-        // the "lifted" rule may catch a phantom contact of the frame (they live 30–500 ms next to a figure) —
-        // move the token only once the contact has survived LIFT_ARM_MS
-        c.target = { x: p.x + offset.x, y: p.y + offset.y }; c.armedAt = now + LIFT_ARM_MS;
-        c.timer = setTimeout(() => { c.timer = null; if (this.contacts.get(m.id) === c) this.chain = this.chain.then(() => this.applyTouch(c, false)).catch(e => log('touch apply failed', e)); }, LIFT_ARM_MS);
-      }
       this.onStatus({ touch: this.touchStatus(), lastMoveName: tok.name });
+      this.loop();
     } else if (m.phase === 'move') {
       const c = this.contacts.get(m.id); if (!c) return;
-      c.target = { x: p.x + c.offset.x, y: p.y + c.offset.y }; c.movedAt = now;
-      this.scheduleApply(m.id, c);
+      c.raw = { x: m.x, y: m.y }; c.rawAt = now;
+      this.smooth(c, now);
     } else if (m.phase === 'up') {
       const c = this.contacts.get(m.id); if (!c) return;
-      clearTimeout(c.timer); c.timer = null;
       this.contacts.delete(m.id);
+      const armed = !c.armedAt || now >= c.armedAt;
+      if (c.saved && !armed) { Object.assign(c, c.saved); c.saved = null; this.lost.set(m.id, c); this.noteThrottled('phantom', 'touch #' + m.id, 'up ← a phantom next to', c.name, '— ignored'); return; }
+      if (c.state === 'drag' && c.moved && armed) { c.lostAt = c.lostSince = now; this.lost.set(m.id, c); this.note('touch #' + m.id, 'up ←', c.name, '— waiting', LOST_MS, 'ms for it to come back'); return; }
+      // a phantom bound by the "lifted" rule that dies before LIFT_ARM_MS moves nothing (no snap either)
+      clearTimeout(c.timer); c.timer = null;
       this.lifted = { tokenId: c.tokenId, name: c.name, at: now };
       this.note('touch #' + m.id, 'up ←', c.name, 'held', Math.round((now - c.downAt) / 100) / 10, 's');
-      // snap only when the contact is armed — a phantom bound by the "lifted" rule that dies before LIFT_ARM_MS
-      // must not move the token either (applyTouch skips the arm guard for a final apply). Under-contact binds
-      // have armedAt = 0 and snap as usual.
-      if (this.settings.snap && c.target && (!c.armedAt || now >= c.armedAt)) this.chain = this.chain.then(() => this.applyTouch(c, true)).catch(e => log('snap failed', e));
       this.onStatus({ touch: this.touchStatus() });
     }
+  }
+  toCanvas(f) { const v = this.lastVp; return { x: v.left + f.x * v.width, y: v.top + f.y * v.height }; }
+  cellsBetween(a, b) { const v = this.lastVp, dpi = this.dpiCache || 150; return Math.hypot((a.x - b.x) * v.width, (a.y - b.y) * v.height) / dpi; }
+  /* One Euro filter on the display position: steady when still, little lag when moved fast */
+  smooth(c, now) {
+    const v = this.lastVp; if (!v) return;
+    const dt = Math.max(0.001, (now - c.fAt) / 1000), dpi = this.dpiCache || 150;
+    const a = cut => 1 / (1 + 1 / (2 * Math.PI * cut * dt));
+    const ad = a(EURO.dCutoff);
+    c.df = { x: c.df.x + ad * ((c.raw.x - c.f.x) / dt - c.df.x), y: c.df.y + ad * ((c.raw.y - c.f.y) / dt - c.df.y) };
+    const speed = Math.hypot(c.df.x * v.width, c.df.y * v.height) / dpi; // cells per second
+    const k = a(EURO.minCutoff + EURO.beta * speed);
+    c.f = { x: c.f.x + k * (c.raw.x - c.f.x), y: c.f.y + k * (c.raw.y - c.f.y) };
+    c.fAt = now;
+    if (this.cellsBetween(c.f, c.anchor) > (c.state === 'standing' ? RESUME_CELLS : STILL_CELLS)) {
+      if (c.state === 'standing') this.resume(c);
+      c.anchor = { ...c.f }; c.stillSince = now; c.movedAt = now; c.moved = true;
+    }
+    if (c.state === 'drag' && c.moved) c.dirty = true;
+  }
+  /* while contacts are down: follow the dragged ones, put down the ones that stand still, give up lost ones */
+  loop() {
+    if (this.loopTimer) return;
+    this.loopTimer = setInterval(() => this.step(), TICK_MS);
+    if (this.loopTimer && this.loopTimer.unref) this.loopTimer.unref();
+  }
+  step() {
+    const now = Date.now();
+    for (const c of this.lost.values()) if (now - c.rawAt > 20) this.smooth(c, now);
+    for (const [id, c] of this.lost) if (now - c.lostAt > LOST_MS) {
+      this.lost.delete(id);
+      this.lifted = { tokenId: c.tokenId, name: c.name, at: c.lostAt };
+      this.note('touch #' + id, 'gone —', c.name, 'put down');
+      this.follow(c, true); this.drop(c);
+      this.onStatus({ touch: this.touchStatus() });
+    }
+    for (const c of this.contacts.values()) {
+      if (now - c.rawAt > 20) this.smooth(c, now); // no report = the contact did not move: the filter settles on it
+      if (c.state !== 'drag' || (c.armedAt && now < c.armedAt)) continue;
+      if (c.saved) { c.saved = null; c.lostAt = 0; c.stillSince = now; c.anchor = { ...c.f }; } // the contact that took over lived long enough
+      if (now - c.stillSince >= SETTLE_MS) { this.follow(c, true); this.drop(c); c.state = 'standing'; c.anchor = { ...c.f }; continue; }
+      if (c.dirty) this.follow(c);
+    }
+    if (!this.contacts.size && !this.lost.size) { clearInterval(this.loopTimer); this.loopTimer = null; }
+  }
+  follow(c, exact = false) {
+    if (!this.lastVp || !c.moved) return;
+    c.dirty = false;
+    // after a pause the figure starts where it was put down; the offset eases back to where the hand holds it
+    const k = exact ? 1 : 1 - Math.exp(-(TICK_MS / 1000) / OFFSET_EASE_S);
+    c.offset = { x: c.offset.x + (c.base.x - c.offset.x) * k, y: c.offset.y + (c.base.y - c.offset.y) * k };
+    if (Math.abs(c.offset.x - c.base.x) > 0.3 || Math.abs(c.offset.y - c.base.y) > 0.3) c.dirty = true;
+    const p = this.toCanvas(c.f), t = { x: p.x + c.offset.x, y: p.y + c.offset.y };
+    if (c.target && Math.hypot(t.x - c.target.x, t.y - c.target.y) < 0.5) return;
+    c.target = t;
+    if (!exact) this.scheduleApply(c);
+  }
+  /* the figure is put down (lifted, or standing still): the last position, snapped when snap is on */
+  drop(c) {
+    clearTimeout(c.timer); c.timer = null;
+    if (!c.target) return;
+    this.chain = this.chain.then(() => this.applyTouch(c, true)).catch(e => log('put down failed', e));
+  }
+  /* a standing figure is moved again: drag on from where it stands (no jump), the offset eases back */
+  resume(c) {
+    const t = this.tokens.find(x => x.id === c.tokenId), p = this.toCanvas(c.f);
+    c.state = 'drag';
+    if (t) c.offset = { x: t.x + t.w / 2 - p.x, y: t.y + t.h / 2 - p.y };
+  }
+  release() {
+    clearInterval(this.loopTimer); this.loopTimer = null;
+    for (const c of [...this.contacts.values(), ...this.lost.values()]) clearTimeout(c.timer);
+    this.contacts.clear(); this.lost.clear();
   }
   tokenAt(p, dpi) { // token whose bounds (grown by BIND_CELLS) contain p, nearest centre wins
     let best = null, bestD = Infinity;
@@ -272,15 +376,15 @@ export class TouchBridge {
     }
     return best;
   }
-  scheduleApply(id, c) {
+  scheduleApply(c) {
     if (c.timer) return;
-    c.timer = setTimeout(() => { c.timer = null; if (this.contacts.get(id) === c) this.chain = this.chain.then(() => this.applyTouch(c, false)).catch(e => log('touch apply failed', e)); }, TOUCH_APPLY_MS);
+    c.timer = setTimeout(() => { c.timer = null; if (c.state === 'drag') this.chain = this.chain.then(() => this.applyTouch(c, false)).catch(e => log('touch apply failed', e)); }, TOUCH_APPLY_MS);
   }
   async applyTouch(c, final) {
     const target = c.target; if (!target) return;
     if (c.armedAt && Date.now() < c.armedAt && !final) return; // not yet — the arm timer applies the latest target
     const items = await this.OBR.scene.items.getItems([c.tokenId]);
-    if (!items.length) { for (const [id, cc] of this.contacts) if (cc === c) this.contacts.delete(id); return; } // token deleted while held
+    if (!items.length) { for (const [id, cc] of this.contacts) if (cc === c) this.contacts.delete(id); for (const [id, cc] of this.lost) if (cc === c) this.lost.delete(id); return; } // token deleted while held
     const it = items[0];
     let b = null;
     try { b = await this.OBR.scene.items.getItemBounds([it.id]); } catch (_) { return; }
