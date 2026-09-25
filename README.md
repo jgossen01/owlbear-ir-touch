@@ -142,6 +142,10 @@ No Cast? Open a second browser window on the TV, join the room as a player, open
   player picked the mini up and put it down somewhere else. Two plausibility checks: the figure cannot have travelled
   faster than a hand carries it (40 cells/s plus 1.5 cells slack), and while another figure is actively dragged, a
   new contact elsewhere is that player's hand, not a set-down.
+- **One figure at a time.** Two minis are practically never moved at the very same moment, but a hand brushing
+  past another one is common. So while a figure is dragged — and for 0.5 s after it is put down, while the hand is
+  withdrawn — every other figure is locked: a contact on it binds but moves nothing, and a standing figure that gets
+  nudged stays where it is.
 - **Phantom guard.** IR frames report short phantom contacts (30–500 ms) next to a moving figure. A contact bound by
   the lifted rule, or taking over a lost one, moves the token only after it has lived 150 ms.
 - **Hands.** A hand on the glass next to a figure is a separate contact and binds to nothing. A second contact on a
@@ -243,7 +247,8 @@ Docker build.
 
 Table test checklist before a release: service finds the frame (HID direct mode, Windows cursor stays put) → calibrate → Cast window connects → drag a figure →
 lift and set it down elsewhere → drag a figure and leave it standing (snaps after a moment, no lift needed) → wiggle
-it slightly (nothing moves) → drag it on (no jump) → drag two figures at once → a hand on the glass moves nothing → snap on release →
+it slightly (nothing moves) → drag it on (no jump) → drag a figure past others, brushing them with the hand (they stay) →
+right after it, move another one (it follows) → a hand on the glass moves nothing → snap on release →
 snap on, lift a figure and let a phantom appear → nothing moves → stop the service, the Windows touchscreen works again.
 
 ## Thanks

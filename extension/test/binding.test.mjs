@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { TouchBridge, TOUCH_APPLY_MS, LIFT_ARM_MS, LIFT_DRAG_GRACE_S, PROTOCOL, SETTLE_MS, LOST_MS } from '../touch.js';
+import { TouchBridge, TOUCH_APPLY_MS, LIFT_ARM_MS, LIFT_DRAG_GRACE_S, PROTOCOL, SETTLE_MS, LOST_MS, LOCK_GRACE_MS } from '../touch.js';
 
 const DPI = 150, W = 1920, H = 1080;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -114,22 +114,50 @@ test('5 · plausibility: a set-down farther than a hand could carry the figure i
   assert.deepEqual(obr.centre('a'), { x: 375, y: 375 });
 });
 
-test('6 · two figures drag independently; a third contact on empty map during a drag is a hand, not a set-down', async () => {
+test('6 · one figure at a time: while one is dragged a contact on another moves nothing; a moment later it does', async () => {
   const { obr, b } = await bridgeFor([A, B]);
   touch(b, 1, 'down', 375, 375); touch(b, 2, 'down', 975, 675);
-  touch(b, 1, 'move', 600, 500); touch(b, 2, 'move', 1200, 800);
+  touch(b, 1, 'move', 600, 500);
+  await sleep(30);
+  touch(b, 2, 'move', 1200, 800);          // a hand brushing over B while A is on the move
   await stand(b);
   near(obr.centre('a'), { x: 600, y: 500 });
-  near(obr.centre('b'), { x: 1200, y: 800 });
+  assert.deepEqual(obr.centre('b'), { x: 975, y: 675 }, 'B is locked');
+  assert.equal(b.contacts.size, 2, 'the contact on B stays bound (it cannot grab B later by surprise)');
+  await sleep(LOCK_GRACE_MS + 50);         // A stands: the lock runs out
+  for (let i = 1; i <= 10; i++) { touch(b, 2, 'move', 1200 + i * 10, 800 + i * 5); await sleep(16); } // → 1300,850
+  await stand(b);
+  near(obr.centre('b'), { x: 1300, y: 850 }, 'now B follows its contact');
+});
+
+test('6b · a third contact on empty map during a drag is a hand, not a set-down', async () => {
+  const { obr, b } = await bridgeFor([A, B]);
+  touch(b, 1, 'down', 375, 375); touch(b, 1, 'move', 600, 500);
+  await stand(b);
   touch(b, 1, 'up', 600, 500);             // A lifted now
-  await sleep(LIFT_DRAG_GRACE_S * 1000 + 100);
-  touch(b, 2, 'move', 1260, 850);          // B is actively dragged (half a cell — more than jitter) …
-  await sleep(60);                         // (the smoothed position needs a few frames to leave the standing circle)
+  await sleep(Math.max(LIFT_DRAG_GRACE_S * 1000, LOCK_GRACE_MS) + 100);
+  touch(b, 2, 'down', 975, 675);
+  for (let i = 1; i <= 6; i++) { touch(b, 2, 'move', 975 + i * 20, 675); await sleep(16); } // B is actively dragged …
   touch(b, 3, 'down', 600, 720);           // … so this contact 1.47 cells below A (outside its grown bounds) is the other hand, not A being set down
   await sleep(LIFT_ARM_MS + 40); await b.chain;
   assert.equal(b.contacts.size, 1);
   assert.ok(b.contacts.has(2));
   near(obr.centre('a'), { x: 600, y: 500 });
+});
+
+test('6c · a standing figure nudged while another one is dragged stays where it is', async () => {
+  const { obr, b } = await bridgeFor([A, B], { snap: true });
+  touch(b, 1, 'down', 375, 375);
+  await stand(b);                          // A stands on the glass
+  touch(b, 2, 'down', 975, 675);
+  for (let i = 1; i <= 10; i++) {
+    touch(b, 2, 'move', 975 + i * 15, 675);
+    if (i === 4) touch(b, 1, 'move', 450, 400); // the hand bumps A by half a cell
+    await sleep(16);
+  }
+  await stand(b);
+  assert.deepEqual(obr.centre('a'), { x: 375, y: 375 }, 'A stays');
+  near(obr.centre('b'), { x: 1125, y: 675 }, 'B arrives');
 });
 
 test('7 · a token already held ignores a second contact on it', async () => {

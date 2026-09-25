@@ -8,8 +8,8 @@
    localStorage) and collect the status the touch table broadcasts. The window that IS the table display
    (Owlbear's Cast window, or "Use THIS window" in the popover) runs the TouchBridge. */
 import OBR from 'https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm';
-import { VERSION, CONFIG_KEY, STATUS_CHANNEL, SETTINGS_KEY, HERE_KEY, CAST_PLAYER_NAME, DEFAULT_SETTINGS, getSettings, hasOwnSettings, getHere, getStatus, setStatus, setRemote } from './store.js?v=1.3.0';
-import { TouchBridge } from './touch.js?v=1.3.0';
+import { VERSION, CONFIG_KEY, STATUS_CHANNEL, SETTINGS_KEY, HERE_KEY, CAST_PLAYER_NAME, DEFAULT_SETTINGS, getSettings, hasOwnSettings, getHere, getStatus, setStatus, setRemote } from './store.js?v=1.4.0';
+import { TouchBridge } from './touch.js?v=1.4.0';
 
 const log = (...a) => console.log('[ir-touch]', ...a);
 let role = 'PLAYER', playerName = '', remoteConfig = null, bridge = null, lastStatusAt = 0;

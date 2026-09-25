@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.0 — 2026-09-25
+
+- **One figure at a time.** While a figure is dragged, all other figures are locked until half a second after it is
+  put down: a hand brushing over another mini, or bumping one that stands, no longer drags it along. A contact on a
+  locked figure stays bound, so it cannot grab the figure by surprise later; once the lock is over, moving that
+  figure works as usual.
+
 ## 1.3.0 — 2026-09-25
 
 - **The calibration is protected.** The table browser runs with the local-network-access check off, so any page open

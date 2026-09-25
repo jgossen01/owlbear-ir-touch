@@ -19,6 +19,9 @@
                  whole room — until it moves more than RESUME_CELLS, then it drags on without a jump;
      lost      → it vanished mid-drag (IR shadow, a hand in the way): for LOST_MS a new contact within LOST_CELLS
                  carries on with the same figure instead of dropping (and snapping) it halfway.
+   One figure at a time: while a figure is dragged (and LOCK_GRACE_MS after it is put down, while the hand is
+   withdrawn) every other figure is locked — a contact on it binds but moves nothing, a nudged standing figure stays
+   where it is. Two figures are practically never moved at the very same moment; a hand brushing past one is.
    Stillness and jitter are measured in cells on the display, so a viewport change is not a moving figure.
 
    Physical scale: with the display width known, one grid cell is forced to exactly one inch (tick()).
@@ -38,6 +41,7 @@ export const SETTLE_MS = 350;          // … for this long stands: the figure i
 export const RESUME_CELLS = 0.35;      // a standing contact must move this far to drag again (the frame jitters by a few mm)
 export const LOST_MS = 300;            // a contact gone mid-drag is kept this long …
 export const LOST_CELLS = 1.2;         // … for a new contact this close by to carry on with (IR dropout, a hand in the way)
+export const LOCK_GRACE_MS = 500;      // the other figures stay locked this long after the moving one is put down
 export const OFFSET_EASE_S = 0.12;     // after a pause the token eases back under the contact at this time constant
 export const EURO = { minCutoff: 1.5, beta: 2, dCutoff: 1 }; // One Euro filter; beta per cell/s
 const TICK_MS = 16;
@@ -68,6 +72,7 @@ export class TouchBridge {
     this.dpiCache = 0;
     this.contacts = new Map(); // contact id → { tokenId, name, state: 'drag'|'standing', offset, base, target, f (filtered fraction), … }
     this.lost = new Map();     // contacts gone mid-drag, waiting LOST_MS for a new contact close by
+    this.lock = null;          // { tokenId, until } the figure on the move — every other one is locked
     this.lifted = null;        // { tokenId, name, at } figure lifted most recently → re-binds a touch-down on empty map
     this.chain = Promise.resolve(); // token updates are applied one after another
     this.plog = [];            // protocol / diagnostic log → popover
@@ -261,6 +266,8 @@ export class TouchBridge {
         this.onStatus({ touch: this.touchStatus(), lastUnbound: `${Math.round(m.x * 100)}%,${Math.round(m.y * 100)}%` });
         return;
       }
+      const locked = this.locked(tok.id, now);
+      if (locked && how !== 'under contact') { this.counts.ignored++; this.noteThrottled('locked', 'touch #' + m.id, 'down — not rebound to', tok.name, ': another figure is on the move'); return; }
       const centre = { x: tok.x + tok.w / 2, y: tok.y + tok.h / 2 };
       // keep the offset between contact and token centre — a finger at the edge must not make the token jump;
       // a figure set down on empty map (lifted rule) is centred under the contact. The "lifted" rule may catch a
@@ -269,12 +276,12 @@ export class TouchBridge {
       const under = how === 'under contact';
       const offset = under ? { x: centre.x - p.x, y: centre.y - p.y } : { x: 0, y: 0 };
       const f = { x: m.x, y: m.y };
-      const c = { tokenId: tok.id, name: tok.name, state: 'drag', offset, base: { ...offset }, target: null, timer: null, downAt: now, movedAt: 0,
+      const c = { tokenId: tok.id, name: tok.name, state: locked ? 'standing' : 'drag', offset, base: { ...offset }, target: null, timer: null, downAt: now, movedAt: 0,
         armedAt: under ? 0 : now + LIFT_ARM_MS, moved: !under, dirty: !under, raw: { ...f }, rawAt: now, f, df: { x: 0, y: 0 }, fAt: now,
         anchor: { ...f }, stillSince: now, lostAt: 0 };
       this.contacts.set(m.id, c);
       if (this.lifted && this.lifted.tokenId === tok.id) this.lifted = null;
-      this.note('touch #' + m.id, 'down →', tok.name, '(' + how + ')', this.screenPct(p), this.sizeText(m));
+      this.note('touch #' + m.id, 'down →', tok.name, '(' + how + ')', this.screenPct(p), this.sizeText(m), locked ? '— locked: another figure is on the move' : '');
       this.onStatus({ touch: this.touchStatus(), lastMoveName: tok.name });
       this.loop();
     } else if (m.phase === 'move') {
@@ -316,6 +323,7 @@ export class TouchBridge {
     c.f = { x: c.f.x + k * (c.raw.x - c.f.x), y: c.f.y + k * (c.raw.y - c.f.y) };
     c.fAt = now;
     if (this.cellsBetween(c.f, c.anchor) > (c.state === 'standing' ? RESUME_CELLS : STILL_CELLS)) {
+      if (c.state === 'standing' && this.locked(c.tokenId, now)) { c.anchor = { ...c.f }; c.stillSince = now; return; } // nudged while another figure moves
       if (c.state === 'standing') this.resume(c);
       c.anchor = { ...c.f }; c.stillSince = now; c.movedAt = now; c.moved = true;
     }
@@ -341,9 +349,17 @@ export class TouchBridge {
       if (now - c.rawAt > 20) this.smooth(c, now); // no report = the contact did not move: the filter settles on it
       if (c.state !== 'drag' || (c.armedAt && now < c.armedAt)) continue;
       if (c.saved) { c.saved = null; c.lostAt = 0; c.stillSince = now; c.anchor = { ...c.f }; } // the contact that took over lived long enough
+      if (c.moved) {
+        // one figure at a time: the first one to move holds the lock, a second one stays where it is
+        if (this.locked(c.tokenId, now)) { clearTimeout(c.timer); c.timer = null; c.state = 'standing'; c.target = null; c.anchor = { ...c.f }; c.stillSince = now; this.noteThrottled('locked:' + c.tokenId, c.name, 'stays — another figure is on the move'); continue; }
+        this.lock = { tokenId: c.tokenId, until: Infinity };
+      }
       if (now - c.stillSince >= SETTLE_MS) { this.follow(c, true); this.drop(c); c.state = 'standing'; c.anchor = { ...c.f }; continue; }
       if (c.dirty) this.follow(c);
     }
+    // the figure holding the lock is put down (or lifted): the others stay locked a moment longer, while the hand is withdrawn
+    const l = this.lock;
+    if (l && l.until === Infinity && ![...this.contacts.values(), ...this.lost.values()].some(c => c.tokenId === l.tokenId && c.state === 'drag' && c.moved)) l.until = now + LOCK_GRACE_MS;
     if (!this.contacts.size && !this.lost.size) { clearInterval(this.loopTimer); this.loopTimer = null; }
   }
   follow(c, exact = false) {
@@ -370,8 +386,9 @@ export class TouchBridge {
     c.state = 'drag';
     if (t) c.offset = { x: t.x + t.w / 2 - p.x, y: t.y + t.h / 2 - p.y };
   }
+  locked(tokenId, now) { const l = this.lock; return !!l && l.tokenId !== tokenId && now < l.until; }
   release() {
-    clearInterval(this.loopTimer); this.loopTimer = null;
+    clearInterval(this.loopTimer); this.loopTimer = null; this.lock = null;
     for (const c of [...this.contacts.values(), ...this.lost.values()]) clearTimeout(c.timer);
     this.contacts.clear(); this.lost.clear();
   }
