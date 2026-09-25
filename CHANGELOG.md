@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.0 — 2026-09-25
+
+- **"One figure at a time" is a setting** in the popover (on by default). Switched off, several figures can be
+  dragged at once again, as before 1.4.0.
+
 ## 1.4.0 — 2026-09-25
 
 - **One figure at a time.** While a figure is dragged, all other figures are locked until half a second after it is

@@ -130,6 +130,17 @@ test('6 · one figure at a time: while one is dragged a contact on another moves
   near(obr.centre('b'), { x: 1300, y: 850 }, 'now B follows its contact');
 });
 
+test('6d · with "One figure at a time" off two figures drag independently', async () => {
+  const { obr, b } = await bridgeFor([A, B], { oneAtATime: false });
+  touch(b, 1, 'down', 375, 375); touch(b, 2, 'down', 975, 675);
+  touch(b, 1, 'move', 600, 500);
+  await sleep(30);
+  touch(b, 2, 'move', 1200, 800);
+  await stand(b);
+  near(obr.centre('a'), { x: 600, y: 500 });
+  near(obr.centre('b'), { x: 1200, y: 800 });
+});
+
 test('6b · a third contact on empty map during a drag is a hand, not a set-down', async () => {
   const { obr, b } = await bridgeFor([A, B]);
   touch(b, 1, 'down', 375, 375); touch(b, 1, 'move', 600, 500);

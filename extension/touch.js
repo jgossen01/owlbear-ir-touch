@@ -19,7 +19,7 @@
                  whole room — until it moves more than RESUME_CELLS, then it drags on without a jump;
      lost      → it vanished mid-drag (IR shadow, a hand in the way): for LOST_MS a new contact within LOST_CELLS
                  carries on with the same figure instead of dropping (and snapping) it halfway.
-   One figure at a time: while a figure is dragged (and LOCK_GRACE_MS after it is put down, while the hand is
+   One figure at a time (setting, on by default): while a figure is dragged (and LOCK_GRACE_MS after it is put down, while the hand is
    withdrawn) every other figure is locked — a contact on it binds but moves nothing, a nudged standing figure stays
    where it is. Two figures are practically never moved at the very same moment; a hand brushing past one is.
    Stillness and jitter are measured in cells on the display, so a viewport change is not a moving figure.
@@ -54,12 +54,12 @@ const log = (...a) => console.log('[ir-touch]', ...a);
 export class TouchBridge {
   /**
    * @param {object} OBR   the Owlbear SDK
-   * @param {object} settings   { port, displayWidthMm, physicalScale, snap }
+   * @param {object} settings   { port, displayWidthMm, physicalScale, snap, oneAtATime }
    * @param {(patch:object)=>void} onStatus
    */
   constructor(OBR, settings, onStatus) {
     this.OBR = OBR;
-    this.settings = { port: 50000, displayWidthMm: 0, physicalScale: true, snap: false, ...settings };
+    this.settings = { port: 50000, displayWidthMm: 0, physicalScale: true, snap: false, oneAtATime: true, ...settings };
     this.onStatus = onStatus || (() => {});
     this.helloTimeoutMs = HELLO_TIMEOUT_MS;
     this.ws = null; this.stopped = false;
@@ -386,7 +386,7 @@ export class TouchBridge {
     c.state = 'drag';
     if (t) c.offset = { x: t.x + t.w / 2 - p.x, y: t.y + t.h / 2 - p.y };
   }
-  locked(tokenId, now) { const l = this.lock; return !!l && l.tokenId !== tokenId && now < l.until; }
+  locked(tokenId, now) { const l = this.lock; return this.settings.oneAtATime !== false && !!l && l.tokenId !== tokenId && now < l.until; }
   release() {
     clearInterval(this.loopTimer); this.loopTimer = null; this.lock = null;
     for (const c of [...this.contacts.values(), ...this.lost.values()]) clearTimeout(c.timer);

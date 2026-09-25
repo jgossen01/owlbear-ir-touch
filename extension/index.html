@@ -57,6 +57,7 @@
     </div>
     <label class="row"><input type="checkbox" id="s-physical"><span>1 grid cell = 1 inch on the display<small>Needs the display size. Overrides the zoom in the table window.</small></span></label>
     <label class="row"><input type="checkbox" id="s-snap"><span>Snap to the grid on release</span></label>
+    <label class="row"><input type="checkbox" id="s-one"><span>One figure at a time<small>While one figure is moved the others are locked — a hand brushing past does not take them along.</small></span></label>
     <label class="row"><input type="checkbox" id="s-autocast"><span>Auto-detect the Cast window<small>Owlbear's Cast window (player “Cast Receiver”) becomes the touch table by itself.</small></span></label>
     <label class="row"><input type="checkbox" id="s-here"><span>Use THIS window as the touch table<small>For a second browser window on the TV instead of the Cast window.</small></span></label>
   </div>
@@ -75,7 +76,7 @@
   <div class="sub">Pairs with <a href="https://dndsync.com" target="_blank" rel="noopener"><b>D&amp;D Sync</b></a> — a free web app that keeps the whole table in sync in real time: character sheets, initiative tracker, GM panel, no install. Together with IR Touch you get an initiative bar, movement rings and shared dice rolls on the table display. <a href="https://ko-fi.com/dndsync" target="_blank" rel="noopener">Support on Ko-fi ♥</a></div>
 
 <script type="module">
-import { SETTINGS_KEY, STATUS_KEY, REMOTE_KEY, CAST_PLAYER_NAME, getSettings, setSettings, getHere, setHere, getStatus, getRemote, inchToWidthMm } from './store.js?v=1.4.0';
+import { SETTINGS_KEY, STATUS_KEY, REMOTE_KEY, CAST_PLAYER_NAME, getSettings, setSettings, getHere, setHere, getStatus, getRemote, inchToWidthMm } from './store.js?v=1.5.0';
 const $ = id => document.getElementById(id);
 
 function touchText(r) {
@@ -96,6 +97,7 @@ function render() {
   if (document.activeElement !== $('s-width')) $('s-width').value = s.displayWidthMm || '';
   $('s-physical').checked = !!s.physicalScale;
   $('s-snap').checked = !!s.snap;
+  $('s-one').checked = s.oneAtATime !== false;
   $('s-autocast').checked = s.autoCast !== false;
   $('s-here').checked = getHere();
   $('cal-url').textContent = `http://localhost:${s.port || 50000}/calibrate`;
@@ -124,6 +126,7 @@ $('s-size').addEventListener('change', e => {
 $('s-width').addEventListener('change', e => { setSettings({ displayInch: 0, displayWidthMm: Math.round(num(e.target.value, 0)) }); render(); });
 $('s-physical').addEventListener('change', e => { setSettings({ physicalScale: e.target.checked }); render(); });
 $('s-snap').addEventListener('change', e => { setSettings({ snap: e.target.checked }); render(); });
+$('s-one').addEventListener('change', e => { setSettings({ oneAtATime: e.target.checked }); render(); });
 $('s-autocast').addEventListener('change', e => { setSettings({ autoCast: e.target.checked }); render(); });
 $('s-here').addEventListener('change', e => { setHere(e.target.checked); render(); });
 $('copy').addEventListener('click', () => { const t = $('diag-info').textContent + '\n' + $('plog').textContent; if (navigator.clipboard) navigator.clipboard.writeText(t).catch(() => {}); });

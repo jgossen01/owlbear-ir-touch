@@ -8,8 +8,8 @@
    localStorage) and collect the status the touch table broadcasts. The window that IS the table display
    (Owlbear's Cast window, or "Use THIS window" in the popover) runs the TouchBridge. */
 import OBR from 'https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm';
-import { VERSION, CONFIG_KEY, STATUS_CHANNEL, SETTINGS_KEY, HERE_KEY, CAST_PLAYER_NAME, DEFAULT_SETTINGS, getSettings, hasOwnSettings, getHere, getStatus, setStatus, setRemote } from './store.js?v=1.4.0';
-import { TouchBridge } from './touch.js?v=1.4.0';
+import { VERSION, CONFIG_KEY, STATUS_CHANNEL, SETTINGS_KEY, HERE_KEY, CAST_PLAYER_NAME, DEFAULT_SETTINGS, getSettings, hasOwnSettings, getHere, getStatus, setStatus, setRemote } from './store.js?v=1.5.0';
+import { TouchBridge } from './touch.js?v=1.5.0';
 
 const log = (...a) => console.log('[ir-touch]', ...a);
 let role = 'PLAYER', playerName = '', remoteConfig = null, bridge = null, lastStatusAt = 0;
@@ -43,7 +43,7 @@ function evaluate() {
   const here = getHere(), cast = isCastWindow();
   const run = !!s.enabled && (here || (s.autoCast !== false && cast));
   const diag = { role, playerName, isCastWindow: cast, here, cfgFrom: hasOwnSettings() ? 'local' : remoteConfig ? 'room' : 'defaults', screen: `${screen.width}×${screen.height}`, version: VERSION };
-  const sig = run ? JSON.stringify([s.port, s.displayWidthMm, s.physicalScale, s.snap]) : '';
+  const sig = run ? JSON.stringify([s.port, s.displayWidthMm, s.physicalScale, s.snap, s.oneAtATime !== false]) : '';
   if (!run) {
     const wasRunning = !!bridge;
     if (bridge) { bridge.stop(); bridge = null; }
@@ -56,7 +56,7 @@ function evaluate() {
   setStatus({ active: true, connected: false, error: null, protocol: null, touch: null, plog: [], counts: null, lastMoveName: null, lastMoveDelta: null, lastUnbound: null, ...diag });
   // the callback is tied to THIS instance: a stopped bridge's asynchronous ws.onclose must not resurrect
   // active: true or overwrite the status of the bridge that replaced it
-  const b = new TouchBridge(OBR, { port: s.port, displayWidthMm: s.displayWidthMm, physicalScale: !!s.physicalScale, snap: !!s.snap },
+  const b = new TouchBridge(OBR, { port: s.port, displayWidthMm: s.displayWidthMm, physicalScale: !!s.physicalScale, snap: !!s.snap, oneAtATime: s.oneAtATime !== false },
                             patch => { if (bridge !== b) return; setStatus({ active: true, ...diag, ...patch }); publishStatus(false); });
   bridge = b;
   b.sig = sig;

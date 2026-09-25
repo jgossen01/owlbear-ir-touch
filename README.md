@@ -123,6 +123,7 @@ No Cast? Open a second browser window on the TV, join the room as a player, open
 | Display size / picture width | Width of the picture in mm (a 43″ 16:9 panel is 952 mm). Needed for the physical scale. |
 | 1 grid cell = 1 inch | Forces the zoom in the table window so one grid cell is exactly one inch on the glass — standard 1″ mini bases sit on one cell. |
 | Snap to the grid on release | When the figure is set down, the token is centred on the cell under it. |
+| One figure at a time | On by default: while one figure is moved (and 0.5 s after), the others are locked — a hand brushing past does not take them along. Off: several figures can be dragged at once. |
 | Auto-detect the Cast window | Owlbear names the Cast window's player "Cast Receiver"; that window becomes the touch table. |
 | Use THIS window | Makes the current window the touch table (per window, not saved). |
 
@@ -142,7 +143,7 @@ No Cast? Open a second browser window on the TV, join the room as a player, open
   player picked the mini up and put it down somewhere else. Two plausibility checks: the figure cannot have travelled
   faster than a hand carries it (40 cells/s plus 1.5 cells slack), and while another figure is actively dragged, a
   new contact elsewhere is that player's hand, not a set-down.
-- **One figure at a time.** Two minis are practically never moved at the very same moment, but a hand brushing
+- **One figure at a time** (setting, on by default). Two minis are practically never moved at the very same moment, but a hand brushing
   past another one is common. So while a figure is dragged — and for 0.5 s after it is put down, while the hand is
   withdrawn — every other figure is locked: a contact on it binds but moves nothing, and a standing figure that gets
   nudged stays where it is.
