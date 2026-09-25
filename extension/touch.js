@@ -4,7 +4,8 @@
    Talks to the IR touch service (touch-server/) on ws://localhost:<port>. The service greets with
      { type: 'HELLO', protocol: 'ir-touch', version, frame, calibration }
    and then streams raw contacts
-     { type: 'TOUCH', id, phase: 'down'|'move'|'up', x, y }        x, y = fraction of the table display (0..1)
+     { type: 'TOUCH', id, phase: 'down'|'move'|'up', x, y, w, h }  x, y = fraction of the table display (0..1),
+                                                                    w, h = contact size (service ≥ 1.3.0, diagnostics only)
 
    Binding contact → token happens HERE, once per contact: at touch-down the token under the contact (within
    BIND_CELLS of its bounds), otherwise the figure lifted most recently, set down again somewhere else (the
@@ -256,7 +257,7 @@ export class TouchBridge {
       }
       if (!tok) {
         this.counts.ignored++;
-        this.noteThrottled('nothing', 'touch #' + m.id, 'down on nothing at', this.screenPct(p), why ? '— not rebound: ' + why : '');
+        this.noteThrottled('nothing', 'touch #' + m.id, 'down on nothing at', this.screenPct(p), this.sizeText(m), why ? '— not rebound: ' + why : '');
         this.onStatus({ touch: this.touchStatus(), lastUnbound: `${Math.round(m.x * 100)}%,${Math.round(m.y * 100)}%` });
         return;
       }
@@ -273,7 +274,7 @@ export class TouchBridge {
         anchor: { ...f }, stillSince: now, lostAt: 0 };
       this.contacts.set(m.id, c);
       if (this.lifted && this.lifted.tokenId === tok.id) this.lifted = null;
-      this.note('touch #' + m.id, 'down →', tok.name, '(' + how + ')', this.screenPct(p));
+      this.note('touch #' + m.id, 'down →', tok.name, '(' + how + ')', this.screenPct(p), this.sizeText(m));
       this.onStatus({ touch: this.touchStatus(), lastMoveName: tok.name });
       this.loop();
     } else if (m.phase === 'move') {
@@ -292,6 +293,14 @@ export class TouchBridge {
       this.note('touch #' + m.id, 'up ←', c.name, 'held', Math.round((now - c.downAt) / 100) / 10, 's');
       this.onStatus({ touch: this.touchStatus() });
     }
+  }
+  /* the contact's size as the frame reports it (service ≥ 1.3.0) — in mm once the display width is known, to tell
+     a mini's base from a finger or a phantom at the table */
+  sizeText(m) {
+    if (!(m.w > 0 || m.h > 0)) return '';
+    const v = this.lastVp, mm = this.settings.displayWidthMm;
+    if (mm > 100 && v && v.width > 0) return `size ${Math.round(m.w * mm)}×${Math.round(m.h * mm * v.height / v.width)} mm`;
+    return `size ${(m.w * 100).toFixed(1)}%×${(m.h * 100).toFixed(1)}%`;
   }
   toCanvas(f) { const v = this.lastVp; return { x: v.left + f.x * v.width, y: v.top + f.y * v.height }; }
   cellsBetween(a, b) { const v = this.lastVp, dpi = this.dpiCache || 150; return Math.hypot((a.x - b.x) * v.width, (a.y - b.y) * v.height) / dpi; }

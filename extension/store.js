@@ -1,5 +1,5 @@
 /* Shared keys, defaults and storage helpers for the IR Touch extension (popover + background page). */
-export const VERSION = '1.2.0';
+export const VERSION = '1.3.0';
 export const CONFIG_KEY     = 'de.jensgossen.ir-touch/config'; // room metadata: settings published by the GM (the Cast window has no shared localStorage)
 export const STATUS_CHANNEL = 'de.jensgossen.ir-touch/status'; // broadcast: status sent by the window that is the touch table
 export const SETTINGS_KEY = 'ir_touch_settings'; // localStorage, per browser profile

@@ -214,6 +214,14 @@ test('13 · a phantom next to a lifted figure does not take it over', async () =
   assert.equal(b.lifted && b.lifted.tokenId, 'a', 'and it can be set down elsewhere (lifted rule)');
 });
 
+test('14 · the diagnostics show the contact size in mm once the display width is known', async () => {
+  const { b } = await bridgeFor([A], { displayWidthMm: 952 });
+  b.handle({ type: 'TOUCH', id: 1, phase: 'down', x: 375 / W, y: 375 / H, w: 0.0267, h: 0.0474 });
+  assert.match(b.plog.join('\n'), /down → Fighter .*size 25×25 mm/);
+  b.handle({ type: 'TOUCH', id: 2, phase: 'down', x: 1500 / W, y: 900 / H });
+  assert.doesNotMatch(b.plog[b.plog.length - 1], /size/, 'an older service without sizes');
+});
+
 test('10 · the physical-scale correction leaves a usable viewport behind', async () => {
   const { b } = await bridgeFor([A], { physicalScale: true, displayWidthMm: 952 }); // 43″ picture → one cell = one inch
   assert.notEqual(b.lastVp, null, 'a contact arriving right after the correction must not be dropped');

@@ -46,6 +46,11 @@ class Calibration {
     const m = this.map || IDENTITY;
     return { x: m.a * rx + m.b * ry + m.c, y: m.d * rx + m.e * ry + m.f };
   }
+  /* size raw → fractions of the display: the bounding box of the mapped raw rectangle (w of the picture width, h of its height) */
+  size(rw, rh) {
+    const m = this.map || IDENTITY;
+    return { w: Math.abs(m.a) * rw + Math.abs(m.b) * rh, h: Math.abs(m.d) * rw + Math.abs(m.e) * rh };
+  }
   get calibrated() { return !!this.map; }
   describe() { return { calibrated: this.calibrated, savedAt: this.savedAt, points: this.points }; }
 }

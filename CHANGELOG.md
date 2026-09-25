@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.0 — 2026-09-25
+
+- **The calibration is protected.** The table browser runs with the local-network-access check off, so any page open
+  in it could reach the touch service — and overwrite or delete the calibration. Only the service's own calibration
+  page (or a program on the PC) may change it now; anything else gets an `ERROR` (WebSocket) or a 403 (HTTP).
+- **Contact size.** `TOUCH` messages carry `w, h` — the contact's size as the frame reports it, as a fraction of the
+  picture (raw in `rw, rh`). The popover's log shows it in mm for every touch-down, to measure at the table how a
+  mini's base, a finger and a phantom differ. Nothing depends on it yet.
+- `--calibration <file>` and `--no-frame` for the service (tests). Update the touch service on the table PC
+  (`git pull`, restart) — the extension works with older services too.
+
 ## 1.2.0 — 2026-09-25
 
 - **Figures that stand are put down.** A mini that stays still on the glass for a moment now counts as set down —

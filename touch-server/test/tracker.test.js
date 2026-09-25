@@ -52,3 +52,13 @@ test('silence for more than 1 s closes every contact', () => {
   assert.equal(up.why, 'silent');
   assert.equal(tr.active.size, 0);
 });
+
+test('the contact size as the frame reports it goes along with down, move and up', () => {
+  const tr = new Tracker(); const ev = collect(tr);
+  tr.feed(rep(0, [{ id: 1, tip: true, rx: 100, ry: 100, w: 800, h: 900 }]));
+  tr.feed(rep(10, [{ id: 1, tip: true, rx: 100, ry: 100, w: 820, h: 900 }])); // only the size changed → no move
+  tr.feed(rep(20, [{ id: 1, tip: true, rx: 120, ry: 100, w: 820, h: 910 }]));
+  tr.feed(rep(30, [{ id: 1, tip: false, rx: 120, ry: 100, w: 0, h: 0 }]));
+  tr.stop();
+  assert.deepEqual(ev.map(e => [e.phase, e.rw, e.rh]), [['down', 800, 900], ['move', 820, 910], ['up', 820, 910]]);
+});

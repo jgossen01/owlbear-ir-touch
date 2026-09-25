@@ -43,7 +43,11 @@ service is started and stopped once more.
 
 ```
 node server.js [--port 50000] [--vid 0x08d3 --pid 0x1000] [--transport auto|hid|usb] [--calibrate] [--verbose]
+               [--calibration <file>] [--no-frame]
 ```
+
+`--calibration` keeps the calibration elsewhere than `touch-server/calibration.json`; `--no-frame` runs the protocol
+without touching any frame (tests).
 
 To start it with Windows: Task Scheduler → "At log on" → `node.exe C:\…\owlbear-ir-touch\touch-server\server.js`,
 or a shortcut in `shell:startup`.
@@ -74,6 +78,10 @@ The service picks raw USB by itself when it finds no vendor HID channel; `--tran
 Open `http://localhost:50000/calibrate` in a browser **on the table display, full screen (F11)** and hold a finger on
 each of the four targets. The result is saved to `touch-server/calibration.json`. Keys on that page: `R` restart,
 `T` test mode (draws every contact), `C` clear, `Esc` close.
+
+Only this page (served by the service itself on `http://localhost:<port>`) or a local program may change the
+calibration. The table browser has to run with the local-network-access check off, so every page open in it can
+reach the service — reading contacts is harmless, but a foreign page's `CALIBRATION` is refused with an `ERROR`.
 
 ### 3. Install the extension
 
@@ -163,15 +171,16 @@ server → client
 | message | meaning |
 | --- | --- |
 | `{ type: 'HELLO', protocol: 'ir-touch', version, port, frame: { connected, name, transport, maxContacts, error }, calibration: { calibrated, savedAt } }` | first message after connect |
-| `{ type: 'TOUCH', id, phase: 'down' \| 'move' \| 'up', x, y, rx, ry, t }` | `x, y` = fraction of the display picture (0..1), `rx, ry` raw frame units (0..32767), `t` ms; `up` carries `held` (ms) |
+| `{ type: 'TOUCH', id, phase: 'down' \| 'move' \| 'up', x, y, w, h, rx, ry, rw, rh, t }` | `x, y` = fraction of the display picture (0..1); `w, h` = the contact's size as the frame reports it, as fractions of the picture width / height (0 when the frame reports none; since 1.3.0); `rx, ry, rw, rh` raw frame units (0..32767), `t` ms; `up` carries `held` (ms) |
 | `{ type: 'FRAME', connected, error }` | frame plugged / unplugged |
 | `{ type: 'CALIBRATED', calibrated, savedAt }` | calibration changed |
+| `{ type: 'ERROR', error, message }` | a request was refused (`forbidden`: a calibration from a page other than the service's own) |
 
 client → server: `{ type: 'HELLO', client }` (optional), `{ type: 'CALIBRATION', points: [{ rx, ry, fx, fy }, …] }`,
-`{ type: 'CALIBRATION_CLEAR' }`.
+`{ type: 'CALIBRATION_CLEAR' }` — the last two only from the calibration page or a local program.
 
 HTTP on the same port: `GET /` status JSON · `GET /calibrate` calibration page · `GET /calibration` current map ·
-`DELETE /calibration` drop it.
+`DELETE /calibration` drop it (same rule: 403 for a foreign `Origin`).
 
 Moves are coalesced per contact and flushed every 10 ms; the frame itself reports at up to ~1 kHz while something
 moves and every ~50 ms for a standing object. Several clients may be connected at once.
@@ -223,7 +232,7 @@ If this saves your table some fiddling: [**support on Ko-fi ♥**](https://ko-fi
 ## Development
 
 ```
-npm test                      # unit tests: contact tracker, calibration, report parsing, contact→token binding
+npm test                      # unit tests: contact tracker, calibration, report parsing, contact→token binding, calibration access
 npm run serve                 # extension at http://localhost:8788/ir-touch/manifest.json
 npm run mock                  # fake touch service on ws://localhost:50000 — type "drag 1 30 30 60 60"
 node scripts/set-version.js 1.0.1   # the only place a version is typed

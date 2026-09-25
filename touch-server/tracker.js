@@ -8,7 +8,7 @@ const GONE_MS = 150, SILENT_MS = 1000;
 class Tracker extends EventEmitter {
   constructor() {
     super();
-    this.active = new Map(); // id → { rx, ry, downAt, seenAt }
+    this.active = new Map(); // id → { rx, ry, rw, rh, downAt, seenAt }
     this.timer = setInterval(() => this.sweep(), 50);
     this.lastReportAt = 0;
   }
@@ -17,11 +17,15 @@ class Tracker extends EventEmitter {
     for (const c of rep.contacts) {
       const cur = this.active.get(c.id);
       if (c.tip) {
-        if (!cur) { this.active.set(c.id, { rx: c.rx, ry: c.ry, downAt: rep.t, seenAt: rep.t }); this.emit('touch', { id: c.id, phase: 'down', rx: c.rx, ry: c.ry, t: rep.t }); }
-        else { cur.seenAt = rep.t; if (cur.rx !== c.rx || cur.ry !== c.ry) { cur.rx = c.rx; cur.ry = c.ry; this.emit('touch', { id: c.id, phase: 'move', rx: c.rx, ry: c.ry, t: rep.t }); } }
+        // rw, rh = the contact's size as the frame reports it (raw units, 0 when it does not); a size change alone is no move
+        if (!cur) { this.active.set(c.id, { rx: c.rx, ry: c.ry, rw: c.w || 0, rh: c.h || 0, downAt: rep.t, seenAt: rep.t }); this.emit('touch', { id: c.id, phase: 'down', rx: c.rx, ry: c.ry, rw: c.w || 0, rh: c.h || 0, t: rep.t }); }
+        else {
+          cur.seenAt = rep.t; if (c.w || c.h) { cur.rw = c.w || 0; cur.rh = c.h || 0; }
+          if (cur.rx !== c.rx || cur.ry !== c.ry) { cur.rx = c.rx; cur.ry = c.ry; this.emit('touch', { id: c.id, phase: 'move', rx: c.rx, ry: c.ry, rw: cur.rw, rh: cur.rh, t: rep.t }); }
+        }
       } else if (cur) {
         this.active.delete(c.id);
-        this.emit('touch', { id: c.id, phase: 'up', rx: c.rx, ry: c.ry, t: rep.t, held: rep.t - cur.downAt });
+        this.emit('touch', { id: c.id, phase: 'up', rx: c.rx, ry: c.ry, rw: cur.rw, rh: cur.rh, t: rep.t, held: rep.t - cur.downAt });
       }
     }
     // a full report (count > 0) lists every live contact — anything missing is gone (hybrid follow-ups carry count 0 and are partial)
@@ -36,7 +40,7 @@ class Tracker extends EventEmitter {
   }
   close(id, cur, t, why) {
     this.active.delete(id);
-    this.emit('touch', { id, phase: 'up', rx: cur.rx, ry: cur.ry, t, held: t - cur.downAt, why });
+    this.emit('touch', { id, phase: 'up', rx: cur.rx, ry: cur.ry, rw: cur.rw, rh: cur.rh, t, held: t - cur.downAt, why });
   }
   stop() { clearInterval(this.timer); }
 }

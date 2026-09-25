@@ -32,7 +32,7 @@ wss.on('connection', ws => {
 
 function send(id, phase, x, y) {
   if (phase === 'up') { const p = last.get(id); if (p) { x = p.x; y = p.y; } last.delete(id); } else last.set(id, { x, y });
-  const msg = { type: 'TOUCH', id, phase, x: x / 100, y: y / 100, rx: Math.round(x / 100 * 32767), ry: Math.round(y / 100 * 32767), t: Date.now() };
+  const msg = { type: 'TOUCH', id, phase, x: x / 100, y: y / 100, w: 0.027, h: 0.047, rx: Math.round(x / 100 * 32767), ry: Math.round(y / 100 * 32767), rw: 875, rh: 1555, t: Date.now() }; // a 1″ base on a 43″ picture
   const s = JSON.stringify(msg);
   for (const ws of clients) if (ws.readyState === ws.OPEN) ws.send(s);
   if (phase !== 'move') console.log(`${phase.padEnd(4)} #${id} ${x}%,${y}%`);

@@ -45,3 +45,12 @@ test('degenerate points are rejected and clear() removes the file', () => {
   assert.equal(cal.calibrated, false);
   assert.equal(fs.existsSync(file), false);
 });
+
+test('a contact size maps to fractions of the picture, also with the frame rotated by 90°', () => {
+  const cal = new Calibration({ file: tmpFile() });
+  const s = cal.size(RAW_MAX / 10, RAW_MAX / 20);                 // identity: 10 % × 5 %
+  near(s.w, 0.1); near(s.h, 0.05);
+  assert.ok(cal.set([{ rx: 0, ry: 0, fx: 0, fy: 0 }, { rx: RAW_MAX, ry: 0, fx: 0, fy: 1 }, { rx: 0, ry: RAW_MAX, fx: 1, fy: 0 }, { rx: RAW_MAX, ry: RAW_MAX, fx: 1, fy: 1 }])); // raw x → picture y
+  const r = cal.size(RAW_MAX / 10, RAW_MAX / 20);
+  near(r.w, 0.05, 1e-6); near(r.h, 0.1, 1e-6);
+});

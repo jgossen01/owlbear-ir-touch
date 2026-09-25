@@ -5,6 +5,7 @@
    serves them over WebSocket. Several clients may connect at once (the Owlbear table window, the calibration page).
 
      node server.js [--port 50000] [--vid 0x08d3 --pid 0x1000] [--transport auto|hid|usb] [--calibrate] [--verbose]
+                    [--calibration <file>]   (default: calibration.json next to this file)   [--no-frame]   (tests)
 
    HTTP  GET  /            status (JSON)
          GET  /calibrate   calibration page — open it full-screen (F11) on the table display
@@ -12,11 +13,16 @@
    WS    server → client
          { type: 'HELLO', protocol: 'ir-touch', version, frame: { connected, name, transport, maxContacts, error }, calibration: { calibrated, savedAt } }
          { type: 'FRAME', connected, error }                              frame plugged / unplugged
-         { type: 'TOUCH', id, phase: 'down'|'move'|'up', x, y, rx, ry, t }  x,y = fraction of the display picture (0..1), rx,ry raw
+         { type: 'TOUCH', id, phase: 'down'|'move'|'up', x, y, w, h, rx, ry, rw, rh, t }
+               x,y = fraction of the display picture (0..1), w,h = the contact's size as the frame reports it (fraction of
+               the picture width / height, 0 when the frame does not report it), rx,ry,rw,rh raw
          { type: 'CALIBRATED', calibrated, savedAt }
+         { type: 'ERROR', error, message }                                e.g. a calibration from a foreign page refused
          client → server
          { type: 'CALIBRATION', points: [{ rx, ry, fx, fy }, …] }         from the calibration page
-         { type: 'CALIBRATION_CLEAR' } */
+         { type: 'CALIBRATION_CLEAR' }
+   Only the calibration page of this service (http://localhost:<port>) or a local program may change the calibration
+   (access.js) — the table browser lets every open page reach localhost. */
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -24,6 +30,7 @@ const { WebSocketServer } = require('ws');
 const { Frame } = require('./frame');
 const { Tracker } = require('./tracker');
 const { Calibration } = require('./calibration');
+const { canCalibrate } = require('./access');
 
 const VERSION = require('./package.json').version;
 const argv = process.argv.slice(2);
@@ -37,7 +44,7 @@ const log = (...a) => console.log(`[${ts()}]`, ...a);
 
 const frame = new Frame({ vid: arg('--vid') ? parseInt(arg('--vid')) : null, pid: arg('--pid') ? parseInt(arg('--pid')) : null, transport: arg('--transport', 'auto') });
 const tracker = new Tracker();
-const calib = new Calibration();
+const calib = new Calibration(arg('--calibration') ? { file: path.resolve(arg('--calibration')) } : {});
 let frameStatus = { connected: false, error: 'starting' };
 let clients = new Set();
 let stats = { touches: 0, downs: 0, sent: 0 };
@@ -53,11 +60,12 @@ const pending = new Map(); // contact id → latest move (coalesced)
 tracker.on('touch', ev => {
   stats.touches++;
   const p = calib.apply(ev.rx, ev.ry);
-  const msg = { type: 'TOUCH', id: ev.id, phase: ev.phase, x: round(p.x), y: round(p.y), rx: ev.rx, ry: ev.ry, t: ev.t };
+  const sz = calib.size(ev.rw || 0, ev.rh || 0);
+  const msg = { type: 'TOUCH', id: ev.id, phase: ev.phase, x: round(p.x), y: round(p.y), w: round(sz.w), h: round(sz.h), rx: ev.rx, ry: ev.ry, rw: ev.rw || 0, rh: ev.rh || 0, t: ev.t };
   if (ev.phase === 'move') { pending.set(ev.id, msg); return; }
   if (ev.phase === 'down') stats.downs++;
   if (ev.phase === 'up') { pending.delete(ev.id); msg.held = ev.held; if (ev.why) msg.why = ev.why; }
-  if (VERBOSE || ev.phase !== 'move') log(`${ev.phase.padEnd(4)} #${ev.id} ${(p.x * 100).toFixed(1)}%,${(p.y * 100).toFixed(1)}% raw ${ev.rx},${ev.ry}${ev.held ? ` held ${ev.held} ms` : ''}${ev.why ? ` (${ev.why})` : ''}`);
+  if (VERBOSE || ev.phase !== 'move') log(`${ev.phase.padEnd(4)} #${ev.id} ${(p.x * 100).toFixed(1)}%,${(p.y * 100).toFixed(1)}% raw ${ev.rx},${ev.ry}${ev.rw || ev.rh ? ` size ${(sz.w * 100).toFixed(1)}%×${(sz.h * 100).toFixed(1)}% (raw ${ev.rw}×${ev.rh})` : ''}${ev.held ? ` held ${ev.held} ms` : ''}${ev.why ? ` (${ev.why})` : ''}`);
   broadcast(msg);
 });
 setInterval(() => { if (pending.size) { for (const m of pending.values()) broadcast(m); pending.clear(); } }, FLUSH_MS);
@@ -75,7 +83,9 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
   res.setHeader('Access-Control-Allow-Origin', '*');
   if (url.pathname === '/calibrate') { res.setHeader('Content-Type', 'text/html; charset=utf-8'); return res.end(fs.readFileSync(path.join(__dirname, 'calibrate.html'))); }
-  if (url.pathname === '/calibration' && req.method === 'DELETE') { calib.clear(); broadcast({ type: 'CALIBRATED', ...calib.describe() }); log('calibration cleared'); }
+  if (url.pathname === '/calibration' && req.method === 'DELETE') {
+    if (!canCalibrate(req.headers.origin, PORT)) { log(`calibration clear refused from ${req.headers.origin}`); res.statusCode = 403; res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify({ error: 'forbidden', message: 'only the calibration page of this service may change the calibration' })); }
+    calib.clear(); broadcast({ type: 'CALIBRATED', ...calib.describe() }); log('calibration cleared'); }
   res.setHeader('Content-Type', 'application/json');
   res.end(JSON.stringify(url.pathname === '/calibration' ? calib.describe() : status(), null, 2));
 });
@@ -84,8 +94,14 @@ wss.on('connection', (ws, req) => {
   clients.add(ws);
   log(`client connected (${clients.size}) from ${req.socket.remoteAddress} ${req.headers.origin || ''}`);
   ws.send(JSON.stringify(hello()));
+  const origin = req.headers.origin;
   ws.on('message', data => {
     let msg; try { msg = JSON.parse(data.toString()); } catch (_) { return; }
+    if ((msg.type === 'CALIBRATION' || msg.type === 'CALIBRATION_CLEAR') && !canCalibrate(origin, PORT)) {
+      log(`calibration refused from ${origin} — only the calibration page (http://localhost:${PORT}/calibrate) may change it`);
+      ws.send(JSON.stringify({ type: 'ERROR', error: 'forbidden', message: `only the calibration page of this service may change the calibration (not ${origin})` }));
+      return;
+    }
     if (msg.type === 'CALIBRATION' && Array.isArray(msg.points)) {
       const ok = calib.set(msg.points);
       log(ok ? `calibration saved (${msg.points.length} points)` : 'calibration rejected (degenerate points)');
@@ -98,8 +114,10 @@ wss.on('connection', (ws, req) => {
 });
 server.listen(PORT, '127.0.0.1', () => {
   log(`IR touch service v${VERSION} on ws://localhost:${PORT} — calibration page http://localhost:${PORT}/calibrate`);
-  frame.open();
-  setInterval(() => { if (!frame.dev) frame.open(); }, 3000); // frame plugged in later / driver swapped
+  if (!argv.includes('--no-frame')) { // --no-frame: the protocol without hardware (tests)
+    frame.open();
+    setInterval(() => { if (!frame.dev) frame.open(); }, 3000); // frame plugged in later / driver swapped
+  }
   if (argv.includes('--calibrate')) { const { exec } = require('child_process'); exec(`${process.platform === 'win32' ? 'start ""' : 'xdg-open'} http://localhost:${PORT}/calibrate`); }
 });
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { log('bye'); tracker.stop(); frame.close(); process.exit(0); }); // close() hands the touch screen back to the OS (SIGHUP = console window closed)
