@@ -43,7 +43,7 @@ service is started and stopped once more.
 
 ```
 node server.js [--port 50000] [--vid 0x08d3 --pid 0x1000] [--transport auto|hid|usb] [--calibrate] [--verbose]
-               [--calibration <file>] [--no-frame]
+               [--calibration <file>] [--no-frame] [--relay <pairing code> | --relay off] [--relay-file <file>]
 ```
 
 `--calibration` keeps the calibration elsewhere than `touch-server/calibration.json`; `--no-frame` runs the protocol
@@ -231,6 +231,15 @@ layout above works over raw USB (WinUSB fallback) with `--vid/--pid`.
 character sheets, initiative tracker, GM panel, homebrew monsters — with no install. Its own Owlbear extension puts
 the combat on the map; together with IR Touch you get an **initiative bar**, a **movement ring** around the active
 creature and **shared dice rolls** on the table display.
+
+**Over the D&D Sync server (no local-network switch).** D&D Sync's own tabletop can also take the contacts through
+its server instead of `ws://localhost`: in D&D Sync open the Table panel → *IR touch frame* → *Connect over the
+server* → *Create a pairing code*, then open `http://localhost:50000/relay` on the table PC and paste it (or start the
+service with `--relay "<code>"`; it is kept in `touch-server/relay.json`). The service then also connects **out** to
+that server and sends the same contacts there; the table display takes the direct way whenever it can and the relay
+otherwise. The code only lets the service feed contacts to that one campaign's table display; a new code or
+*Disconnect* in D&D Sync revokes it. Only the service's own pages may change the relay (like the calibration). The
+Owlbear extension keeps using `ws://localhost`.
 
 If this saves your table some fiddling: [**support on Ko-fi ♥**](https://ko-fi.com/dndsync)
 

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>IR Touch relay</title>
+<style>
+  html, body { margin: 0; min-height: 100%; background: #14110c; color: #f0e6c8; font: 16px system-ui, sans-serif; }
+  main { max-width: 640px; margin: 48px auto; padding: 0 20px; line-height: 1.5; }
+  h1 { font-size: 24px; color: #c8a84b; margin: 0 0 8px; }
+  .sub { opacity: .75; font-size: 14px; }
+  .card { border: 1px solid rgba(200,168,75,.35); border-radius: 12px; padding: 16px; margin: 18px 0; }
+  .state { font-weight: 700; }
+  .state.online { color: #4ade80; } .state.off, .state.stopped { color: #f59e0b; } .state.waiting, .state.connecting { color: #93c5fd; }
+  input { width: 100%; box-sizing: border-box; padding: 10px; border-radius: 8px; border: 1px solid rgba(200,168,75,.5); background: #0b0906; color: inherit; font: 14px ui-monospace, monospace; }
+  button { margin-top: 10px; padding: 9px 16px; border-radius: 8px; border: 1px solid #c8a84b; background: #c8a84b; color: #14110c; font-weight: 700; cursor: pointer; }
+  button.quiet { background: transparent; color: #f0e6c8; }
+  .err { color: #f87171; margin-top: 8px; min-height: 1.2em; }
+  code { background: rgba(255,255,255,.08); padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>IR Touch — over the server</h1>
+  <div class="sub">For a table display that cannot reach this service on <code>localhost</code> (Chrome without the local-network switch, a cast window):
+    the service sends the contacts to your D&amp;D Sync server, which hands them to the table display. The table display takes the direct way whenever it can.</div>
+  <div class="card">
+    <div>Relay: <span id="state" class="state">…</span></div>
+    <div id="where" class="sub"></div>
+    <div id="errline" class="err"></div>
+  </div>
+  <div class="card">
+    <label for="code">Pairing code — in D&amp;D Sync: Tabletop → Table panel → IR touch frame → <b>Connect over the server</b></label>
+    <input id="code" placeholder="https://your.server/#touch=…" autocomplete="off" spellcheck="false">
+    <div><button id="save">Connect</button> <button id="off" class="quiet">Switch the relay off</button></div>
+    <div id="msg" class="err"></div>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+function show(r) {
+  $('state').textContent = !r.configured ? 'not set up' : r.state === 'online' ? 'online' : r.state === 'stopped' ? 'stopped' : r.state === 'off' ? 'off' : 'connecting…';
+  $('state').className = 'state ' + (r.configured ? r.state : 'off');
+  $('where').textContent = r.configured ? `${r.server} · campaign ${r.campaign}${r.sent ? ` · ${r.sent} messages sent` : ''}` : 'No pairing code yet.';
+  $('errline').textContent = r.error || '';
+}
+const load = () => fetch('/relay.json').then(r => r.json()).then(show).catch(() => {});
+$('save').onclick = () => fetch('/relay', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: $('code').value.trim() }) })
+  .then(r => r.json().then(j => ({ ok: r.ok, j }))).then(({ ok, j }) => { $('msg').textContent = ok ? '' : (j.message || j.error || 'refused'); if (ok) { $('code').value = ''; show(j); } });
+$('off').onclick = () => fetch('/relay', { method: 'DELETE' }).then(r => r.json()).then(show);
+load(); setInterval(load, 2000);
+</script>
+</body>
+</html>

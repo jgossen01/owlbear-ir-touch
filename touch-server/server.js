@@ -6,8 +6,11 @@
 
      node server.js [--port 50000] [--vid 0x08d3 --pid 0x1000] [--transport auto|hid|usb] [--calibrate] [--verbose]
                     [--calibration <file>]   (default: calibration.json next to this file)   [--no-frame]   (tests)
+                    [--relay <pairing code> | --relay off]   [--relay-file <file>]   (default: relay.json next to this file)
 
    HTTP  GET  /            status (JSON)
+         GET  /relay       relay page: paste the pairing code from D&D Sync   GET /relay.json status
+         POST /relay {code}  DELETE /relay   (only from this service's own pages, like the calibration)
          GET  /calibrate   calibration page — open it full-screen (F11) on the table display
          GET  /calibration current calibration (JSON)     DELETE /calibration  drop it
    WS    server → client
@@ -21,6 +24,8 @@
          client → server
          { type: 'CALIBRATION', points: [{ rx, ry, fx, fy }, …] }         from the calibration page
          { type: 'CALIBRATION_CLEAR' }
+   Relay (relay.js): optionally the same messages also go OUT to a D&D Sync server, which hands them to the table
+   display — for a browser that cannot reach localhost. Paired with a code from D&D Sync.
    Only the calibration page of this service (http://localhost:<port>) or a local program may change the calibration
    (access.js) — the table browser lets every open page reach localhost. */
 const http = require('http');
@@ -31,6 +36,7 @@ const { Frame } = require('./frame');
 const { Tracker } = require('./tracker');
 const { Calibration } = require('./calibration');
 const { canCalibrate } = require('./access');
+const { Relay } = require('./relay');
 
 const VERSION = require('./package.json').version;
 const argv = process.argv.slice(2);
@@ -48,6 +54,7 @@ const calib = new Calibration(arg('--calibration') ? { file: path.resolve(arg('-
 let frameStatus = { connected: false, error: 'starting' };
 let clients = new Set();
 let stats = { touches: 0, downs: 0, sent: 0 };
+const relay = new Relay({ file: arg('--relay-file') ? path.resolve(arg('--relay-file')) : undefined, hello: () => hello(), log });
 
 frame.on('status', st => {
   frameStatus = { connected: !!st.connected, error: st.error || null, name: st.frame && st.frame.name, transport: st.frame && st.frame.transport, maxContacts: st.frame && st.frame.maxContacts };
@@ -72,16 +79,29 @@ setInterval(() => { if (pending.size) { for (const m of pending.values()) broadc
 
 function round(v) { return Math.round(v * 10000) / 10000; }
 function broadcast(obj) {
-  if (!clients.size) return;
   const s = JSON.stringify(obj);
   for (const ws of clients) if (ws.readyState === ws.OPEN) { ws.send(s); stats.sent++; }
+  relay.forward(s, obj.type);
 }
 function hello() { return { type: 'HELLO', protocol: 'ir-touch', version: VERSION, port: PORT, frame: frameStatus, calibration: calib.describe() }; }
-function status() { return { service: 'ir-touch', version: VERSION, port: PORT, frame: frameStatus, calibration: calib.describe(), clients: clients.size, reports: frame.reports, active: tracker.active.size, stats }; }
+function status() { return { service: 'ir-touch', version: VERSION, port: PORT, frame: frameStatus, calibration: calib.describe(), clients: clients.size, reports: frame.reports, active: tracker.active.size, stats, relay: relay.describe() }; }
+const readJson = req => new Promise(resolve => { let b = ''; req.on('data', d => { b += d; if (b.length > 4096) req.destroy(); }); req.on('end', () => { try { resolve(JSON.parse(b || '{}')); } catch (_) { resolve({}); } }); });
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
   res.setHeader('Access-Control-Allow-Origin', '*');
+  if (url.pathname === '/relay' && req.method === 'GET') { res.setHeader('Content-Type', 'text/html; charset=utf-8'); return res.end(fs.readFileSync(path.join(__dirname, 'relay.html'))); }
+  if (url.pathname === '/relay.json') { res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify(relay.describe())); }
+  if (url.pathname === '/relay' && (req.method === 'POST' || req.method === 'DELETE')) {
+    res.setHeader('Content-Type', 'application/json');
+    if (!canCalibrate(req.headers.origin, PORT)) { log(`relay change refused from ${req.headers.origin}`); res.statusCode = 403; return res.end(JSON.stringify({ error: 'forbidden', message: 'only the pages of this service may change the relay' })); }
+    return (req.method === 'DELETE' ? Promise.resolve({}) : readJson(req)).then(body => {
+      if (req.method === 'DELETE') { relay.set(null); log('relay switched off'); return res.end(JSON.stringify(relay.describe())); }
+      if (!relay.set(body.code)) { res.statusCode = 400; return res.end(JSON.stringify({ error: 'bad code', message: 'That is not a pairing code from D&D Sync (https://…/#touch=…).' })); }
+      log(`relay set: ${relay.describe().server} (campaign ${relay.describe().campaign})`);
+      res.end(JSON.stringify(relay.describe()));
+    });
+  }
   if (url.pathname === '/calibrate') { res.setHeader('Content-Type', 'text/html; charset=utf-8'); return res.end(fs.readFileSync(path.join(__dirname, 'calibrate.html'))); }
   if (url.pathname === '/calibration' && req.method === 'DELETE') {
     if (!canCalibrate(req.headers.origin, PORT)) { log(`calibration clear refused from ${req.headers.origin}`); res.statusCode = 403; res.setHeader('Content-Type', 'application/json'); return res.end(JSON.stringify({ error: 'forbidden', message: 'only the calibration page of this service may change the calibration' })); }
@@ -113,11 +133,15 @@ wss.on('connection', (ws, req) => {
   ws.on('error', () => {});
 });
 server.listen(PORT, '127.0.0.1', () => {
-  log(`IR touch service v${VERSION} on ws://localhost:${PORT} — calibration page http://localhost:${PORT}/calibrate`);
+  log(`IR touch service v${VERSION} on ws://localhost:${PORT} — calibration page http://localhost:${PORT}/calibrate, relay http://localhost:${PORT}/relay`);
+  const rc = arg('--relay');
+  if (rc === 'off') relay.set(null);
+  else if (rc && !relay.set(rc)) log('--relay: that is not a pairing code from D&D Sync (https://…/#touch=…)');
+  relay.start();
   if (!argv.includes('--no-frame')) { // --no-frame: the protocol without hardware (tests)
     frame.open();
     setInterval(() => { if (!frame.dev) frame.open(); }, 3000); // frame plugged in later / driver swapped
   }
   if (argv.includes('--calibrate')) { const { exec } = require('child_process'); exec(`${process.platform === 'win32' ? 'start ""' : 'xdg-open'} http://localhost:${PORT}/calibrate`); }
 });
-for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { log('bye'); tracker.stop(); frame.close(); process.exit(0); }); // close() hands the touch screen back to the OS (SIGHUP = console window closed)
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { log('bye'); tracker.stop(); relay.stop(); frame.close(); process.exit(0); }); // close() hands the touch screen back to the OS (SIGHUP = console window closed)

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.6.0 — 2026-09-25
+
+- **Relay over a D&D Sync server** (touch service only). With a pairing code from D&D Sync (`--relay "<code>"` or the
+  new page `http://localhost:50000/relay`) the service also sends its contacts out to that server, which hands them
+  to D&D Sync's table display — for a browser that cannot reach `ws://localhost` (no local-network switch, a cast
+  window). The local WebSocket works as before; the Owlbear extension is unchanged. A refused, replaced or revoked
+  code stops the relay until a new one is entered; a lost connection reconnects by itself. Only the service's own
+  pages may change the relay. Update the touch service on the table PC (`git pull`, restart).
+
 ## 1.5.0 — 2026-09-25
 
 - **"One figure at a time" is a setting** in the popover (on by default). Switched off, several figures can be
